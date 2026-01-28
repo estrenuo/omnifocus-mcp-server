@@ -136,32 +136,55 @@ Create a new task.
 ```
 
 ### omnifocus_complete_task
-Mark a task as complete or dropped.
+Mark a task as complete or dropped. Can use either task ID or task name.
 ```json
 {
   "taskId": "abc123",
   "action": "complete"
 }
 ```
-Action can be `"complete"` (default) or `"drop"`.
+Or by name:
+```json
+{
+  "taskName": "Write documentation",
+  "action": "complete"
+}
+```
+Action can be `"complete"` (default) or `"drop"`. If both `taskId` and `taskName` are provided, `taskId` takes priority.
 
 ### omnifocus_add_tag_to_task
-Add a tag to a task.
+Add a tag to a task. Can use either task ID or task name.
 ```json
 {
   "taskId": "abc123",
   "tagName": "Urgent"
 }
 ```
+Or by name:
+```json
+{
+  "taskName": "Write report",
+  "tagName": "Urgent"
+}
+```
+If both `taskId` and `taskName` are provided, `taskId` takes priority.
 
 ### omnifocus_remove_tag_from_task
-Remove a tag from a task.
+Remove a tag from a task. Can use either task ID or task name.
 ```json
 {
   "taskId": "abc123",
   "tagName": "Urgent"
 }
 ```
+Or by name:
+```json
+{
+  "taskName": "Write report",
+  "tagName": "Urgent"
+}
+```
+If both `taskId` and `taskName` are provided, `taskId` takes priority.
 
 ### omnifocus_search
 Search across OmniFocus.
