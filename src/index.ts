@@ -33,6 +33,10 @@ interface TaskData {
   tags: string[];
   projectName: string | null;
   inInbox: boolean;
+  parentTaskId: string | null;
+  parentTaskName: string | null;
+  hasChildren: boolean;
+  childTaskCount: number;
 }
 
 interface ProjectData {
@@ -157,6 +161,26 @@ function mapTask(t) {
   var containingProj = t.containingProject();
   var tagsList = t.tags();
 
+  // Get parent task information
+  var parentTask = null;
+  var parentTaskId = null;
+  var parentTaskName = null;
+  try {
+    parentTask = t.parentTask();
+    if (parentTask) {
+      parentTaskId = parentTask.id();
+      parentTaskName = parentTask.name();
+    }
+  } catch(e) {}
+
+  // Get child task information
+  var childTasks = [];
+  var childTaskCount = 0;
+  try {
+    childTasks = t.tasks();
+    childTaskCount = childTasks.length;
+  } catch(e) {}
+
   return {
     id: t.id(),
     name: t.name(),
@@ -170,7 +194,11 @@ function mapTask(t) {
     estimatedMinutes: t.estimatedMinutes(),
     tags: tagsList.map(function(tag) { return tag.name(); }),
     projectName: containingProj ? containingProj.name() : null,
-    inInbox: t.inInbox()
+    inInbox: t.inInbox(),
+    parentTaskId: parentTaskId,
+    parentTaskName: parentTaskName,
+    hasChildren: childTaskCount > 0,
+    childTaskCount: childTaskCount
   };
 }
 `;
@@ -611,6 +639,9 @@ const CreateTaskInputSchema = z.object({
   projectName: z.string()
     .optional()
     .describe("Name of project to add task to (creates in inbox if not specified)"),
+  parentTaskId: z.string()
+    .optional()
+    .describe("ID of parent task to create this as a subtask (makes this task a child of the parent)"),
   dueDate: z.string()
     .optional()
     .describe("Due date in ISO 8601 format (e.g., '2024-12-31T17:00:00')"),
@@ -675,9 +706,17 @@ Examples:
     // Escape for JavaScript string
     const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
     const escapeNote = note ? note.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") : "";
-    
+
     let createScript: string;
-    if (projectName) {
+    if (parentTaskId) {
+      // Create as a subtask of an existing task
+      createScript = `
+        var parentTask = doc.flattenedTasks().find(function(t) { return t.id() === "${parentTaskId}"; });
+        if (!parentTask) { throw new Error("Parent task not found with ID: ${parentTaskId}"); }
+        var task = app.Task({name: "${escapeName}"});
+        parentTask.tasks.push(task);
+      `;
+    } else if (projectName) {
       const escapeProject = projectName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       createScript = `
         var project = doc.flattenedProjects().find(function(p) { return p.name() === "${escapeProject}"; });
