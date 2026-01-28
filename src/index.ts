@@ -46,6 +46,8 @@ interface ProjectData {
   folderName: string | null;
   taskCount: number;
   sequential: boolean;
+  nextReviewDate: string | null;
+  reviewInterval: number | null;
 }
 
 interface FolderData {
@@ -180,6 +182,11 @@ function mapProject(p) {
   var dueDate = p.dueDate();
   var deferDate = p.deferDate();
   var folder = p.folder();
+  var nextReviewDate = p.nextReviewDate();
+
+  // reviewInterval is in seconds, convert to days
+  var reviewIntervalSeconds = p.reviewInterval();
+  var reviewIntervalDays = reviewIntervalSeconds ? Math.round(reviewIntervalSeconds / 86400) : null;
 
   return {
     id: p.id(),
@@ -192,7 +199,9 @@ function mapProject(p) {
     deferDate: deferDate ? deferDate.toISOString() : null,
     folderName: folder ? folder.name() : null,
     taskCount: p.flattenedTasks().length,
-    sequential: p.sequential()
+    sequential: p.sequential(),
+    nextReviewDate: nextReviewDate ? nextReviewDate.toISOString() : null,
+    reviewInterval: reviewIntervalDays
   };
 }
 `;
@@ -1232,6 +1241,282 @@ Examples:
       return {
         isError: true,
         content: [{ type: "text", text: `Error getting flagged tasks: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Get Projects for Review
+// ============================================================================
+
+const GetProjectsForReviewInputSchema = z.object({
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(50)
+    .describe("Maximum projects to return"),
+  includeCompleted: z.boolean()
+    .default(false)
+    .describe("Include completed projects")
+}).strict();
+
+server.registerTool(
+  "omnifocus_get_projects_for_review",
+  {
+    title: "Get Projects for Review",
+    description: `Get projects that need review based on their next review date.
+
+Returns projects whose next review date is in the past or today, indicating they need review. This supports the GTD weekly review workflow.
+
+Args:
+  - limit (number): Max projects, 1-500 (default: 50)
+  - includeCompleted (boolean): Include completed projects (default: false)
+
+Returns:
+  Array of projects needing review, sorted by next review date (oldest first)
+
+Examples:
+  - Get projects needing review: {}
+  - Get 10 projects for review: { limit: 10 }
+  - Include completed projects: { includeCompleted: true }`,
+    inputSchema: GetProjectsForReviewInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { limit, includeCompleted } = params;
+
+    const script = `
+      ${PROJECT_MAPPER}
+      var now = new Date();
+
+      var projects = doc.flattenedProjects().filter(function(p) {
+        ${!includeCompleted ? 'if (p.completed()) return false;' : ''}
+        var nextReview = p.nextReviewDate();
+        if (!nextReview) return false;
+        return nextReview <= now;
+      }).sort(function(a, b) {
+        return a.nextReviewDate() - b.nextReviewDate();
+      }).slice(0, ${limit});
+
+      JSON.stringify(projects.map(mapProject));
+    `;
+
+    try {
+      const projects = await executeAndParseJSON<ProjectData[]>(script);
+
+      if (projects.length === 0) {
+        return {
+          content: [{ type: "text", text: "No projects need review at this time." }]
+        };
+      }
+
+      const output = {
+        count: projects.length,
+        projects
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error getting projects for review: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Mark Project Reviewed
+// ============================================================================
+
+const MarkProjectReviewedInputSchema = z.object({
+  projectId: z.string()
+    .describe("The project ID to mark as reviewed"),
+  reviewIntervalDays: z.number()
+    .int()
+    .min(1)
+    .max(365)
+    .optional()
+    .describe("Optional: Set review interval in days (if not specified, uses project's existing interval)")
+}).strict();
+
+server.registerTool(
+  "omnifocus_mark_project_reviewed",
+  {
+    title: "Mark Project Reviewed",
+    description: `Mark a project as reviewed in OmniFocus.
+
+Updates the project's next review date based on its review interval. Optionally updates the review interval.
+
+Args:
+  - projectId (string): The project's ID (required)
+  - reviewIntervalDays (number): Optional review interval in days (1-365)
+
+Returns:
+  The updated project object with new next review date
+
+Examples:
+  - Mark project reviewed: { projectId: "abc123" }
+  - Mark reviewed with new interval: { projectId: "abc123", reviewIntervalDays: 14 }`,
+    inputSchema: MarkProjectReviewedInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { projectId, reviewIntervalDays } = params;
+
+    const script = `
+      ${PROJECT_MAPPER}
+      var project = doc.flattenedProjects().find(function(p) { return p.id() === "${projectId}"; });
+      if (!project) { throw new Error("Project not found with ID: ${projectId}"); }
+
+      ${reviewIntervalDays ? `
+        // Set new review interval (convert days to seconds)
+        project.reviewInterval = ${reviewIntervalDays * 86400};
+      ` : ''}
+
+      // Mark as reviewed (sets next review date based on review interval)
+      project.markReviewed();
+
+      JSON.stringify(mapProject(project));
+    `;
+
+    try {
+      const project = await executeAndParseJSON<ProjectData>(script);
+
+      return {
+        content: [{
+          type: "text",
+          text: `Project marked as reviewed:\n${JSON.stringify(project, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error marking project reviewed: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Batch Mark Projects Reviewed
+// ============================================================================
+
+const BatchMarkReviewedInputSchema = z.object({
+  projectIds: z.array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Array of project IDs to mark as reviewed (1-100 projects)"),
+  reviewIntervalDays: z.number()
+    .int()
+    .min(1)
+    .max(365)
+    .optional()
+    .describe("Optional: Set review interval for all projects in days")
+}).strict();
+
+server.registerTool(
+  "omnifocus_batch_mark_reviewed",
+  {
+    title: "Batch Mark Projects Reviewed",
+    description: `Mark multiple projects as reviewed in a single operation.
+
+Efficiently marks multiple projects as reviewed, optionally setting a new review interval for all of them.
+
+Args:
+  - projectIds (array): Array of project IDs to mark reviewed (1-100 items, required)
+  - reviewIntervalDays (number): Optional review interval in days to apply to all projects
+
+Returns:
+  Summary of results including count of successfully reviewed projects
+
+Examples:
+  - Mark multiple projects reviewed: { projectIds: ["abc123", "def456", "ghi789"] }
+  - Batch review with new interval: { projectIds: ["abc123", "def456"], reviewIntervalDays: 7 }`,
+    inputSchema: BatchMarkReviewedInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { projectIds, reviewIntervalDays } = params;
+
+    const script = `
+      ${PROJECT_MAPPER}
+      var projectIds = ${JSON.stringify(projectIds)};
+      var results = [];
+      var errors = [];
+
+      projectIds.forEach(function(projectId) {
+        try {
+          var project = doc.flattenedProjects().find(function(p) { return p.id() === projectId; });
+          if (!project) {
+            errors.push({ projectId: projectId, error: "Project not found" });
+            return;
+          }
+
+          ${reviewIntervalDays ? `
+            // Set new review interval (convert days to seconds)
+            project.reviewInterval = ${reviewIntervalDays * 86400};
+          ` : ''}
+
+          // Mark as reviewed
+          project.markReviewed();
+          results.push(mapProject(project));
+        } catch (e) {
+          errors.push({ projectId: projectId, error: String(e) });
+        }
+      });
+
+      JSON.stringify({
+        successCount: results.length,
+        errorCount: errors.length,
+        projects: results,
+        errors: errors
+      });
+    `;
+
+    try {
+      const result = await executeAndParseJSON<{
+        successCount: number;
+        errorCount: number;
+        projects: ProjectData[];
+        errors: Array<{ projectId: string; error: string }>;
+      }>(script);
+
+      const message = `Batch review completed:
+- Successfully reviewed: ${result.successCount} project(s)
+- Errors: ${result.errorCount}
+
+${result.errors.length > 0 ? `\nErrors:\n${result.errors.map(e => `  - ${e.projectId}: ${e.error}`).join('\n')}` : ''}`;
+
+      return {
+        content: [{
+          type: "text",
+          text: `${message}\n\n${JSON.stringify(result, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error in batch mark reviewed: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }
