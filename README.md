@@ -8,9 +8,10 @@ This MCP server provides access to OmniFocus functionality:
 
 ### Task Management
 - **List inbox tasks** - View and filter tasks in your inbox
-- **Create tasks** - Add new tasks with full property support (due dates, tags, notes, etc.)
+- **Create tasks** - Add new tasks with full property support (due dates, planned dates, tags, notes, etc.)
 - **Complete/Drop tasks** - Mark tasks as done or dropped
 - **Get due tasks** - Find tasks due within a timeframe
+- **Get planned tasks** - Find tasks planned within a timeframe
 - **Get flagged tasks** - List all flagged items
 - **Add/remove tags from tasks** - Manage task tags
 
@@ -129,11 +130,17 @@ Create a new task.
   "projectName": "Work",
   "dueDate": "2024-12-31T17:00:00",
   "deferDate": "2024-12-01T09:00:00",
+  "plannedDate": "2024-12-15T09:00:00",
   "flagged": true,
   "estimatedMinutes": 60,
   "tagNames": ["Review", "Important"]
 }
 ```
+
+**Planned Date vs Due Date:**
+- `dueDate`: When the task must be completed (deadline)
+- `plannedDate`: When you intend to work on the task (planning)
+- This distinction is crucial for separating deadlines from scheduled work time
 
 ### omnifocus_complete_task
 Mark a task as complete or dropped.
@@ -188,6 +195,16 @@ Get flagged tasks.
 ```json
 {
   "includeCompleted": false,
+  "limit": 50
+}
+```
+
+### omnifocus_get_planned_tasks
+Get tasks planned within a timeframe.
+```json
+{
+  "daysAhead": 7,
+  "includeOverdue": true,
   "limit": 50
 }
 ```

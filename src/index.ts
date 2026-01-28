@@ -28,6 +28,7 @@ interface TaskData {
   flagged: boolean;
   dueDate: string | null;
   deferDate: string | null;
+  plannedDate: string | null;
   estimatedMinutes: number | null;
   tags: string[];
   projectName: string | null;
@@ -149,6 +150,10 @@ function mapTask(t) {
 
   var dueDate = t.dueDate();
   var deferDate = t.deferDate();
+  var plannedDate = null;
+  try {
+    plannedDate = t.plannedDate ? t.plannedDate() : null;
+  } catch(e) {}
   var containingProj = t.containingProject();
   var tagsList = t.tags();
 
@@ -161,6 +166,7 @@ function mapTask(t) {
     flagged: t.flagged(),
     dueDate: dueDate ? dueDate.toISOString() : null,
     deferDate: deferDate ? deferDate.toISOString() : null,
+    plannedDate: plannedDate ? plannedDate.toISOString() : null,
     estimatedMinutes: t.estimatedMinutes(),
     tags: tagsList.map(function(tag) { return tag.name(); }),
     projectName: containingProj ? containingProj.name() : null,
@@ -611,6 +617,9 @@ const CreateTaskInputSchema = z.object({
   deferDate: z.string()
     .optional()
     .describe("Defer/start date in ISO 8601 format"),
+  plannedDate: z.string()
+    .optional()
+    .describe("Planned date in ISO 8601 format - when you intend to work on the task"),
   flagged: z.boolean()
     .default(false)
     .describe("Whether to flag the task"),
@@ -631,14 +640,15 @@ server.registerTool(
     title: "Create Task",
     description: `Create a new task in OmniFocus.
 
-Creates a task in the inbox or a specific project. Tags, due dates, and other properties can be set.
+Creates a task in the inbox or a specific project. Tags, due dates, planned dates, and other properties can be set.
 
 Args:
   - name (string): Task name/title (required)
   - note (string): Optional note/description
   - projectName (string): Project to add to (inbox if not specified)
-  - dueDate (string): Due date in ISO 8601 format
+  - dueDate (string): Due date in ISO 8601 format - when the task must be completed
   - deferDate (string): Defer/start date in ISO 8601 format
+  - plannedDate (string): Planned date in ISO 8601 format - when you intend to work on the task
   - flagged (boolean): Flag the task (default: false)
   - estimatedMinutes (number): Time estimate in minutes
   - tagNames (array): Tag names to apply
@@ -649,6 +659,7 @@ Returns:
 Examples:
   - Simple task: { name: "Buy groceries" }
   - Task with details: { name: "Review report", projectName: "Work", dueDate: "2024-12-31T17:00:00", flagged: true }
+  - Task with planning: { name: "Write article", plannedDate: "2024-12-15T09:00:00", dueDate: "2024-12-31T17:00:00" }
   - Task with tags: { name: "Call John", tagNames: ["Calls", "Urgent"] }`,
     inputSchema: CreateTaskInputSchema,
     annotations: {
@@ -659,7 +670,7 @@ Examples:
     }
   },
   async (params) => {
-    const { name, note, projectName, dueDate, deferDate, flagged, estimatedMinutes, tagNames } = params;
+    const { name, note, projectName, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, tagNames } = params;
     
     // Escape for JavaScript string
     const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
@@ -687,6 +698,7 @@ Examples:
       ${note ? `task.note = "${escapeNote}";` : ""}
       ${dueDate ? `task.dueDate = new Date("${dueDate}");` : ""}
       ${deferDate ? `task.deferDate = new Date("${deferDate}");` : ""}
+      ${plannedDate ? `try { task.plannedDate = new Date("${plannedDate}"); } catch(e) {}` : ""}
       ${flagged ? `task.flagged = true;` : ""}
       ${estimatedMinutes ? `task.estimatedMinutes = ${estimatedMinutes};` : ""}
       ${tagNames && tagNames.length > 0 ? `
@@ -1232,6 +1244,116 @@ Examples:
       return {
         isError: true,
         content: [{ type: "text", text: `Error getting flagged tasks: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Get Planned Tasks
+// ============================================================================
+
+const GetPlannedTasksInputSchema = z.object({
+  daysAhead: z.number()
+    .int()
+    .min(0)
+    .max(365)
+    .default(7)
+    .describe("Number of days ahead to look (0 = today only)"),
+  includeOverdue: z.boolean()
+    .default(true)
+    .describe("Include overdue planned tasks"),
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(50)
+    .describe("Maximum tasks to return")
+}).strict();
+
+server.registerTool(
+  "omnifocus_get_planned_tasks",
+  {
+    title: "Get Planned Tasks",
+    description: `Get tasks that are planned within a specified timeframe.
+
+Planned dates represent when you intend to work on a task, separate from the due date.
+
+Args:
+  - daysAhead (number): Days to look ahead, 0-365 (default: 7)
+  - includeOverdue (boolean): Include overdue planned tasks (default: true)
+  - limit (number): Max tasks, 1-500 (default: 50)
+
+Returns:
+  Array of planned tasks sorted by planned date
+
+Examples:
+  - Planned this week: {}
+  - Planned today: { daysAhead: 0 }
+  - Planned in 30 days: { daysAhead: 30 }`,
+    inputSchema: GetPlannedTasksInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { daysAhead, includeOverdue, limit } = params;
+
+    const script = `
+      ${TASK_MAPPER}
+      var now = new Date();
+      var futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + ${daysAhead});
+      futureDate.setHours(23, 59, 59, 999);
+
+      var tasks = doc.flattenedTasks().filter(function(t) {
+        if (t.completed()) return false;
+        var planned = null;
+        try {
+          planned = t.plannedDate ? t.plannedDate() : null;
+        } catch(e) {}
+        if (!planned) return false;
+        ${includeOverdue ? '' : 'if (planned < now) return false;'}
+        return planned <= futureDate;
+      }).sort(function(a, b) {
+        var aPlanned = null;
+        var bPlanned = null;
+        try {
+          aPlanned = a.plannedDate ? a.plannedDate() : null;
+          bPlanned = b.plannedDate ? b.plannedDate() : null;
+        } catch(e) {}
+        if (!aPlanned || !bPlanned) return 0;
+        return aPlanned - bPlanned;
+      }).slice(0, ${limit});
+
+      JSON.stringify(tasks.map(mapTask));
+    `;
+
+    try {
+      const tasks = await executeAndParseJSON<TaskData[]>(script);
+
+      if (tasks.length === 0) {
+        return {
+          content: [{ type: "text", text: `No tasks planned within ${daysAhead} days.` }]
+        };
+      }
+
+      const output = {
+        count: tasks.length,
+        daysAhead,
+        tasks
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error getting planned tasks: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }
