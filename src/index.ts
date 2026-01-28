@@ -32,6 +32,8 @@ interface TaskData {
   tags: string[];
   projectName: string | null;
   inInbox: boolean;
+  repetitionRule: string | null;
+  repetitionMethod: string | null;
 }
 
 interface ProjectData {
@@ -152,6 +154,19 @@ function mapTask(t) {
   var containingProj = t.containingProject();
   var tagsList = t.tags();
 
+  var repetitionRule = null;
+  var repetitionMethod = null;
+  try {
+    var repRule = t.repetitionRule();
+    if (repRule) {
+      repetitionRule = String(repRule);
+    }
+    var repMethod = t.repetitionMethod();
+    if (repMethod) {
+      repetitionMethod = String(repMethod);
+    }
+  } catch(e) {}
+
   return {
     id: t.id(),
     name: t.name(),
@@ -164,7 +179,9 @@ function mapTask(t) {
     estimatedMinutes: t.estimatedMinutes(),
     tags: tagsList.map(function(tag) { return tag.name(); }),
     projectName: containingProj ? containingProj.name() : null,
-    inInbox: t.inInbox()
+    inInbox: t.inInbox(),
+    repetitionRule: repetitionRule,
+    repetitionMethod: repetitionMethod
   };
 }
 `;
@@ -622,7 +639,36 @@ const CreateTaskInputSchema = z.object({
     .describe("Estimated time in minutes"),
   tagNames: z.array(z.string())
     .optional()
-    .describe("Array of tag names to apply")
+    .describe("Array of tag names to apply"),
+  recurrence: z.object({
+    frequency: z.enum(["daily", "weekly", "monthly", "yearly"])
+      .describe("Recurrence frequency"),
+    interval: z.number()
+      .int()
+      .min(1)
+      .default(1)
+      .describe("Interval between repetitions (e.g., every 2 weeks)"),
+    daysOfWeek: z.array(z.enum(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]))
+      .optional()
+      .describe("Days of week for weekly recurrence (e.g., ['Monday', 'Wednesday', 'Friday'])"),
+    dayOfMonth: z.number()
+      .int()
+      .min(1)
+      .max(31)
+      .optional()
+      .describe("Day of month for monthly recurrence (1-31)"),
+    monthOfYear: z.number()
+      .int()
+      .min(1)
+      .max(12)
+      .optional()
+      .describe("Month of year for yearly recurrence (1-12)"),
+    repeatFrom: z.enum(["due-date", "completion-date"])
+      .default("due-date")
+      .describe("Whether to repeat from due date or completion date")
+  }).strict()
+    .optional()
+    .describe("Recurrence pattern for repeating tasks")
 }).strict();
 
 server.registerTool(
@@ -631,7 +677,7 @@ server.registerTool(
     title: "Create Task",
     description: `Create a new task in OmniFocus.
 
-Creates a task in the inbox or a specific project. Tags, due dates, and other properties can be set.
+Creates a task in the inbox or a specific project. Tags, due dates, and other properties can be set. Supports repeating/recurring tasks.
 
 Args:
   - name (string): Task name/title (required)
@@ -642,6 +688,13 @@ Args:
   - flagged (boolean): Flag the task (default: false)
   - estimatedMinutes (number): Time estimate in minutes
   - tagNames (array): Tag names to apply
+  - recurrence (object): Optional recurrence pattern with:
+    - frequency: "daily", "weekly", "monthly", or "yearly"
+    - interval: Number of periods between repetitions (default: 1)
+    - daysOfWeek: Array of days for weekly recurrence (e.g., ["Monday", "Friday"])
+    - dayOfMonth: Day number for monthly recurrence (1-31)
+    - monthOfYear: Month number for yearly recurrence (1-12)
+    - repeatFrom: "due-date" or "completion-date" (default: "due-date")
 
 Returns:
   The created task object with id, name, and other properties
@@ -649,7 +702,10 @@ Returns:
 Examples:
   - Simple task: { name: "Buy groceries" }
   - Task with details: { name: "Review report", projectName: "Work", dueDate: "2024-12-31T17:00:00", flagged: true }
-  - Task with tags: { name: "Call John", tagNames: ["Calls", "Urgent"] }`,
+  - Daily recurring: { name: "Daily standup", dueDate: "2024-01-01T09:00:00", recurrence: { frequency: "daily", interval: 1 } }
+  - Weekly on Mon/Wed/Fri: { name: "Workout", dueDate: "2024-01-01T07:00:00", recurrence: { frequency: "weekly", daysOfWeek: ["Monday", "Wednesday", "Friday"] } }
+  - Monthly on 1st and 15th: { name: "Pay bills", dueDate: "2024-01-01T12:00:00", recurrence: { frequency: "monthly", interval: 1, dayOfMonth: 1 } }
+  - Repeat from completion: { name: "Review quarterly", recurrence: { frequency: "monthly", interval: 3, repeatFrom: "completion-date" } }`,
     inputSchema: CreateTaskInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -659,7 +715,7 @@ Examples:
     }
   },
   async (params) => {
-    const { name, note, projectName, dueDate, deferDate, flagged, estimatedMinutes, tagNames } = params;
+    const { name, note, projectName, dueDate, deferDate, flagged, estimatedMinutes, tagNames, recurrence } = params;
     
     // Escape for JavaScript string
     const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
@@ -681,6 +737,52 @@ Examples:
       `;
     }
 
+    // Generate recurrence rule script if provided
+    let recurrenceScript = "";
+    if (recurrence) {
+      const { frequency, interval = 1, daysOfWeek, dayOfMonth, monthOfYear, repeatFrom = "due-date" } = recurrence;
+
+      // Set repetition method
+      const repetitionMethod = repeatFrom === "completion-date" ? "start-after-completion" : "fixed";
+      recurrenceScript += `task.repetitionMethod = app.RepetitionMethod.${repetitionMethod};\n`;
+
+      // Build the recurrence rule based on frequency
+      if (frequency === "daily") {
+        recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.daily, interval: ${interval} });\n`;
+      } else if (frequency === "weekly") {
+        if (daysOfWeek && daysOfWeek.length > 0) {
+          // Map day names to RecurrenceDay enum values
+          const dayMapping: Record<string, string> = {
+            "Sunday": "sunday",
+            "Monday": "monday",
+            "Tuesday": "tuesday",
+            "Wednesday": "wednesday",
+            "Thursday": "thursday",
+            "Friday": "friday",
+            "Saturday": "saturday"
+          };
+          const days = daysOfWeek.map(d => `app.RecurrenceDay.${dayMapping[d]}`).join(", ");
+          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.weekly, interval: ${interval}, daysOfWeek: [${days}] });\n`;
+        } else {
+          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.weekly, interval: ${interval} });\n`;
+        }
+      } else if (frequency === "monthly") {
+        if (dayOfMonth) {
+          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.monthly, interval: ${interval}, dayOfMonth: ${dayOfMonth} });\n`;
+        } else {
+          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.monthly, interval: ${interval} });\n`;
+        }
+      } else if (frequency === "yearly") {
+        if (monthOfYear && dayOfMonth) {
+          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.yearly, interval: ${interval}, monthOfYear: ${monthOfYear}, dayOfMonth: ${dayOfMonth} });\n`;
+        } else if (monthOfYear) {
+          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.yearly, interval: ${interval}, monthOfYear: ${monthOfYear} });\n`;
+        } else {
+          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.yearly, interval: ${interval} });\n`;
+        }
+      }
+    }
+
     const script = `
       ${TASK_MAPPER}
       ${createScript}
@@ -697,6 +799,7 @@ Examples:
           if (tag) { task.tags.push(tag); }
         });
       ` : ""}
+      ${recurrenceScript}
       JSON.stringify(mapTask(task));
     `;
     
