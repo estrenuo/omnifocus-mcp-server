@@ -9,6 +9,8 @@ This MCP server provides access to OmniFocus functionality:
 ### Task Management
 - **List inbox tasks** - View and filter tasks in your inbox
 - **Create tasks** - Add new tasks with full property support (due dates, tags, notes, etc.)
+- **Create subtasks** - Create tasks as children of other tasks (hierarchical structure)
+- **Get subtasks** - Retrieve all subtasks for a given task (with recursive option)
 - **Complete/Drop tasks** - Mark tasks as done or dropped
 - **Get due tasks** - Find tasks due within a timeframe
 - **Get flagged tasks** - List all flagged items
@@ -135,6 +137,15 @@ Create a new task.
 }
 ```
 
+To create a subtask, include the `parentTaskId` parameter:
+```json
+{
+  "name": "Research competitors",
+  "parentTaskId": "abc123",
+  "estimatedMinutes": 30
+}
+```
+
 ### omnifocus_complete_task
 Mark a task as complete or dropped.
 ```json
@@ -189,6 +200,25 @@ Get flagged tasks.
 {
   "includeCompleted": false,
   "limit": 50
+}
+```
+
+### omnifocus_get_subtasks
+Get all subtasks (children) of a specific task.
+```json
+{
+  "taskId": "abc123",
+  "includeCompleted": false,
+  "recursive": false
+}
+```
+
+For recursive retrieval of all nested descendants:
+```json
+{
+  "taskId": "abc123",
+  "recursive": true,
+  "maxDepth": 3
 }
 ```
 

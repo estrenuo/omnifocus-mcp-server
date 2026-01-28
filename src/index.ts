@@ -32,6 +32,10 @@ interface TaskData {
   tags: string[];
   projectName: string | null;
   inInbox: boolean;
+  parentTaskId: string | null;
+  parentTaskName: string | null;
+  hasChildren: boolean;
+  childTaskCount: number;
 }
 
 interface ProjectData {
@@ -152,6 +156,26 @@ function mapTask(t) {
   var containingProj = t.containingProject();
   var tagsList = t.tags();
 
+  // Get parent task information
+  var parentTask = null;
+  var parentTaskId = null;
+  var parentTaskName = null;
+  try {
+    parentTask = t.parentTask();
+    if (parentTask) {
+      parentTaskId = parentTask.id();
+      parentTaskName = parentTask.name();
+    }
+  } catch(e) {}
+
+  // Get child task information
+  var childTasks = [];
+  var childTaskCount = 0;
+  try {
+    childTasks = t.tasks();
+    childTaskCount = childTasks.length;
+  } catch(e) {}
+
   return {
     id: t.id(),
     name: t.name(),
@@ -164,7 +188,11 @@ function mapTask(t) {
     estimatedMinutes: t.estimatedMinutes(),
     tags: tagsList.map(function(tag) { return tag.name(); }),
     projectName: containingProj ? containingProj.name() : null,
-    inInbox: t.inInbox()
+    inInbox: t.inInbox(),
+    parentTaskId: parentTaskId,
+    parentTaskName: parentTaskName,
+    hasChildren: childTaskCount > 0,
+    childTaskCount: childTaskCount
   };
 }
 `;
@@ -605,6 +633,9 @@ const CreateTaskInputSchema = z.object({
   projectName: z.string()
     .optional()
     .describe("Name of project to add task to (creates in inbox if not specified)"),
+  parentTaskId: z.string()
+    .optional()
+    .describe("ID of parent task to create this as a subtask (makes this task a child of the parent)"),
   dueDate: z.string()
     .optional()
     .describe("Due date in ISO 8601 format (e.g., '2024-12-31T17:00:00')"),
@@ -631,12 +662,13 @@ server.registerTool(
     title: "Create Task",
     description: `Create a new task in OmniFocus.
 
-Creates a task in the inbox or a specific project. Tags, due dates, and other properties can be set.
+Creates a task in the inbox, a specific project, or as a subtask of another task. Tags, due dates, and other properties can be set.
 
 Args:
   - name (string): Task name/title (required)
   - note (string): Optional note/description
   - projectName (string): Project to add to (inbox if not specified)
+  - parentTaskId (string): Parent task ID to create this as a subtask
   - dueDate (string): Due date in ISO 8601 format
   - deferDate (string): Defer/start date in ISO 8601 format
   - flagged (boolean): Flag the task (default: false)
@@ -649,7 +681,8 @@ Returns:
 Examples:
   - Simple task: { name: "Buy groceries" }
   - Task with details: { name: "Review report", projectName: "Work", dueDate: "2024-12-31T17:00:00", flagged: true }
-  - Task with tags: { name: "Call John", tagNames: ["Calls", "Urgent"] }`,
+  - Task with tags: { name: "Call John", tagNames: ["Calls", "Urgent"] }
+  - Subtask: { name: "Research options", parentTaskId: "abc123" }`,
     inputSchema: CreateTaskInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -659,14 +692,22 @@ Examples:
     }
   },
   async (params) => {
-    const { name, note, projectName, dueDate, deferDate, flagged, estimatedMinutes, tagNames } = params;
-    
+    const { name, note, projectName, parentTaskId, dueDate, deferDate, flagged, estimatedMinutes, tagNames } = params;
+
     // Escape for JavaScript string
     const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
     const escapeNote = note ? note.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") : "";
-    
+
     let createScript: string;
-    if (projectName) {
+    if (parentTaskId) {
+      // Create as a subtask of an existing task
+      createScript = `
+        var parentTask = doc.flattenedTasks().find(function(t) { return t.id() === "${parentTaskId}"; });
+        if (!parentTask) { throw new Error("Parent task not found with ID: ${parentTaskId}"); }
+        var task = app.Task({name: "${escapeName}"});
+        parentTask.tasks.push(task);
+      `;
+    } else if (projectName) {
       const escapeProject = projectName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       createScript = `
         var project = doc.flattenedProjects().find(function(p) { return p.name() === "${escapeProject}"; });
@@ -1232,6 +1273,119 @@ Examples:
       return {
         isError: true,
         content: [{ type: "text", text: `Error getting flagged tasks: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Get Subtasks
+// ============================================================================
+
+const GetSubtasksInputSchema = z.object({
+  taskId: z.string()
+    .describe("The parent task ID to get subtasks for"),
+  includeCompleted: z.boolean()
+    .default(false)
+    .describe("Include completed subtasks"),
+  recursive: z.boolean()
+    .default(false)
+    .describe("Recursively get all nested subtasks (all descendants)"),
+  maxDepth: z.number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Maximum depth for recursive subtask retrieval (default: unlimited)")
+}).strict();
+
+server.registerTool(
+  "omnifocus_get_subtasks",
+  {
+    title: "Get Subtasks",
+    description: `Get all subtasks (child tasks) of a specific task.
+
+Retrieves the hierarchical subtasks of a parent task. Can optionally retrieve all nested descendants.
+
+Args:
+  - taskId (string): The parent task's ID
+  - includeCompleted (boolean): Include completed subtasks (default: false)
+  - recursive (boolean): Get all nested subtasks recursively (default: false)
+  - maxDepth (number): Maximum depth for recursive retrieval, 1-10 (optional)
+
+Returns:
+  Array of subtask objects with full task details including their own children
+
+Examples:
+  - Get direct children: { taskId: "abc123" }
+  - Get all descendants: { taskId: "abc123", recursive: true }
+  - Get 2 levels deep: { taskId: "abc123", recursive: true, maxDepth: 2 }`,
+    inputSchema: GetSubtasksInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskId, includeCompleted, recursive, maxDepth } = params;
+
+    const script = `
+      ${TASK_MAPPER}
+
+      function getSubtasks(task, depth, maxDepth) {
+        var children = task.tasks();
+        ${!includeCompleted ? 'children = children.filter(function(t) { return !t.completed(); });' : ''}
+
+        var results = [];
+        for (var i = 0; i < children.length; i++) {
+          var child = children[i];
+          var mapped = mapTask(child);
+          mapped.depth = depth;
+          results.push(mapped);
+
+          ${recursive ? `
+          if (!maxDepth || depth < maxDepth) {
+            var grandchildren = getSubtasks(child, depth + 1, maxDepth);
+            results = results.concat(grandchildren);
+          }
+          ` : ''}
+        }
+        return results;
+      }
+
+      var parentTask = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
+      if (!parentTask) { throw new Error("Task not found with ID: ${taskId}"); }
+
+      var subtasks = getSubtasks(parentTask, 1, ${maxDepth ?? 'null'});
+      JSON.stringify({
+        parentTask: mapTask(parentTask),
+        subtaskCount: subtasks.length,
+        subtasks: subtasks
+      });
+    `;
+
+    try {
+      const result = await executeAndParseJSON<{
+        parentTask: TaskData;
+        subtaskCount: number;
+        subtasks: Array<TaskData & { depth: number }>;
+      }>(script);
+
+      if (result.subtaskCount === 0) {
+        return {
+          content: [{ type: "text", text: `No subtasks found for task "${result.parentTask.name}".` }]
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error getting subtasks: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }
