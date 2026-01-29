@@ -28,12 +28,17 @@ interface TaskData {
   flagged: boolean;
   dueDate: string | null;
   deferDate: string | null;
+  plannedDate: string | null;
   estimatedMinutes: number | null;
   tags: string[];
   projectName: string | null;
   inInbox: boolean;
   repetitionRule: string | null;
   repetitionMethod: string | null;
+  parentTaskId: string | null;
+  parentTaskName: string | null;
+  hasChildren: boolean;
+  childTaskCount: number;
 }
 
 interface ProjectData {
@@ -151,6 +156,10 @@ function mapTask(t) {
 
   var dueDate = t.dueDate();
   var deferDate = t.deferDate();
+  var plannedDate = null;
+  try {
+    plannedDate = t.plannedDate ? t.plannedDate() : null;
+  } catch(e) {}
   var containingProj = t.containingProject();
   var tagsList = t.tags();
 
@@ -167,6 +176,26 @@ function mapTask(t) {
     }
   } catch(e) {}
 
+  // Get parent task information
+  var parentTask = null;
+  var parentTaskId = null;
+  var parentTaskName = null;
+  try {
+    parentTask = t.parentTask();
+    if (parentTask) {
+      parentTaskId = parentTask.id();
+      parentTaskName = parentTask.name();
+    }
+  } catch(e) {}
+
+  // Get child task information
+  var childTasks = [];
+  var childTaskCount = 0;
+  try {
+    childTasks = t.tasks();
+    childTaskCount = childTasks.length;
+  } catch(e) {}
+
   return {
     id: t.id(),
     name: t.name(),
@@ -176,12 +205,17 @@ function mapTask(t) {
     flagged: t.flagged(),
     dueDate: dueDate ? dueDate.toISOString() : null,
     deferDate: deferDate ? deferDate.toISOString() : null,
+    plannedDate: plannedDate ? plannedDate.toISOString() : null,
     estimatedMinutes: t.estimatedMinutes(),
     tags: tagsList.map(function(tag) { return tag.name(); }),
     projectName: containingProj ? containingProj.name() : null,
     inInbox: t.inInbox(),
     repetitionRule: repetitionRule,
     repetitionMethod: repetitionMethod
+    parentTaskId: parentTaskId,
+    parentTaskName: parentTaskName,
+    hasChildren: childTaskCount > 0,
+    childTaskCount: childTaskCount
   };
 }
 `;
@@ -622,12 +656,18 @@ const CreateTaskInputSchema = z.object({
   projectName: z.string()
     .optional()
     .describe("Name of project to add task to (creates in inbox if not specified)"),
+  parentTaskId: z.string()
+    .optional()
+    .describe("ID of parent task to create this as a subtask (makes this task a child of the parent)"),
   dueDate: z.string()
     .optional()
     .describe("Due date in ISO 8601 format (e.g., '2024-12-31T17:00:00')"),
   deferDate: z.string()
     .optional()
     .describe("Defer/start date in ISO 8601 format"),
+  plannedDate: z.string()
+    .optional()
+    .describe("Planned date in ISO 8601 format - when you intend to work on the task"),
   flagged: z.boolean()
     .default(false)
     .describe("Whether to flag the task"),
@@ -677,14 +717,15 @@ server.registerTool(
     title: "Create Task",
     description: `Create a new task in OmniFocus.
 
-Creates a task in the inbox or a specific project. Tags, due dates, and other properties can be set. Supports repeating/recurring tasks.
+Creates a task in the inbox or a specific project. Tags, due dates, planned dates and other properties can be set. Supports repeating/recurring tasks.
 
 Args:
   - name (string): Task name/title (required)
   - note (string): Optional note/description
   - projectName (string): Project to add to (inbox if not specified)
-  - dueDate (string): Due date in ISO 8601 format
+  - dueDate (string): Due date in ISO 8601 format - when the task must be completed
   - deferDate (string): Defer/start date in ISO 8601 format
+  - plannedDate (string): Planned date in ISO 8601 format - when you intend to work on the task
   - flagged (boolean): Flag the task (default: false)
   - estimatedMinutes (number): Time estimate in minutes
   - tagNames (array): Tag names to apply
@@ -705,7 +746,9 @@ Examples:
   - Daily recurring: { name: "Daily standup", dueDate: "2024-01-01T09:00:00", recurrence: { frequency: "daily", interval: 1 } }
   - Weekly on Mon/Wed/Fri: { name: "Workout", dueDate: "2024-01-01T07:00:00", recurrence: { frequency: "weekly", daysOfWeek: ["Monday", "Wednesday", "Friday"] } }
   - Monthly on 1st and 15th: { name: "Pay bills", dueDate: "2024-01-01T12:00:00", recurrence: { frequency: "monthly", interval: 1, dayOfMonth: 1 } }
-  - Repeat from completion: { name: "Review quarterly", recurrence: { frequency: "monthly", interval: 3, repeatFrom: "completion-date" } }`,
+  - Repeat from completion: { name: "Review quarterly", recurrence: { frequency: "monthly", interval: 3, repeatFrom: "completion-date" } }`
+  - Task with planning: { name: "Write article", plannedDate: "2024-12-15T09:00:00", dueDate: "2024-12-31T17:00:00" }
+  - Task with tags: { name: "Call John", tagNames: ["Calls", "Urgent"] }`,
     inputSchema: CreateTaskInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -715,14 +758,22 @@ Examples:
     }
   },
   async (params) => {
-    const { name, note, projectName, dueDate, deferDate, flagged, estimatedMinutes, tagNames, recurrence } = params;
+    const { name, note, projectName, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, tagNames, recurrence } = params;
     
     // Escape for JavaScript string
     const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
     const escapeNote = note ? note.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") : "";
-    
+
     let createScript: string;
-    if (projectName) {
+    if (parentTaskId) {
+      // Create as a subtask of an existing task
+      createScript = `
+        var parentTask = doc.flattenedTasks().find(function(t) { return t.id() === "${parentTaskId}"; });
+        if (!parentTask) { throw new Error("Parent task not found with ID: ${parentTaskId}"); }
+        var task = app.Task({name: "${escapeName}"});
+        parentTask.tasks.push(task);
+      `;
+    } else if (projectName) {
       const escapeProject = projectName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       createScript = `
         var project = doc.flattenedProjects().find(function(p) { return p.name() === "${escapeProject}"; });
@@ -789,6 +840,7 @@ Examples:
       ${note ? `task.note = "${escapeNote}";` : ""}
       ${dueDate ? `task.dueDate = new Date("${dueDate}");` : ""}
       ${deferDate ? `task.deferDate = new Date("${deferDate}");` : ""}
+      ${plannedDate ? `try { task.plannedDate = new Date("${plannedDate}"); } catch(e) {}` : ""}
       ${flagged ? `task.flagged = true;` : ""}
       ${estimatedMinutes ? `task.estimatedMinutes = ${estimatedMinutes};` : ""}
       ${tagNames && tagNames.length > 0 ? `
@@ -828,10 +880,10 @@ Examples:
 const CompleteTaskInputSchema = z.object({
   taskId: z.string()
     .optional()
-    .describe("The task ID (primaryKey) to update - takes priority if both taskId and taskName provided"),
+    .describe("The task ID (primaryKey) to update. Takes priority if both taskId and taskName are provided."),
   taskName: z.string()
     .optional()
-    .describe("The task name to search for - used if taskId not provided"),
+    .describe("The task name to search for. Used if taskId is not provided."),
   action: z.enum(["complete", "drop"])
     .default("complete")
     .describe("Action to perform: 'complete' marks the task done, 'drop' marks it as dropped/cancelled")
@@ -846,14 +898,12 @@ server.registerTool(
     title: "Complete or Drop Task",
     description: `Mark a task as complete or dropped in OmniFocus.
 
-Use the task ID from list or search results, or provide a task name.
+Use either the task ID from list/search results, or the task name for natural language interactions.
 
 Args:
-  - taskId (string): The task's ID (primaryKey) - takes priority if both provided
-  - taskName (string): The task name to search for - used if taskId not provided
+  - taskId (string, optional): The task's ID (primaryKey). Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
   - action (string): 'complete' (default) or 'drop'
-
-At least one of taskId or taskName must be provided.
 
 Returns:
   The updated task object
@@ -877,50 +927,51 @@ Examples:
       ? "task.markDropped();"
       : "task.markComplete();";
 
-    let findTaskCode: string;
+    let findTaskScript: string;
     if (taskId) {
-      findTaskCode = `
+      // Use ID if provided (takes priority)
+      findTaskScript = `
         var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
         if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
       `;
-    } else {
-      // taskName must be provided due to schema validation
-      const escapedName = taskName!.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      findTaskCode = `
-        var searchName = "${escapedName}";
-        var exactMatches = doc.flattenedTasks().filter(function(t) {
-          return t.name() === searchName;
-        });
+    } else if (taskName) {
+      // Search by name
+      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      findTaskScript = `
+        var allTasks = doc.flattenedTasks();
 
-        if (exactMatches.length === 1) {
-          var task = exactMatches[0];
-        } else if (exactMatches.length > 1) {
-          var matchList = exactMatches.slice(0, 10).map(function(t) {
-            return "- " + t.name() + " (ID: " + t.id() + ", Project: " + (t.containingProject() ? t.containingProject().name() : "Inbox") + ")";
-          }).join("\\n");
-          throw new Error("Multiple tasks found with exact name '${escapedName}'. Please use taskId instead:\\n" + matchList);
-        } else {
-          var partialMatches = doc.flattenedTasks().filter(function(t) {
-            return t.name().toLowerCase().indexOf(searchName.toLowerCase()) !== -1;
+        // Try exact match first
+        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+
+        // If no exact match, try case-insensitive partial match
+        if (!task) {
+          var searchLower = "${escapedName.toLowerCase()}";
+          var matches = allTasks.filter(function(t) {
+            return t.name().toLowerCase().indexOf(searchLower) !== -1;
           });
 
-          if (partialMatches.length === 0) {
-            throw new Error("No tasks found matching name: ${escapedName}");
-          } else if (partialMatches.length === 1) {
-            var task = partialMatches[0];
-          } else {
-            var matchList = partialMatches.slice(0, 10).map(function(t) {
-              return "- " + t.name() + " (ID: " + t.id() + ", Project: " + (t.containingProject() ? t.containingProject().name() : "Inbox") + ")";
+          if (matches.length === 0) {
+            throw new Error("No task found matching name: ${escapedName}");
+          } else if (matches.length > 1) {
+            var matchList = matches.map(function(t) {
+              var proj = t.containingProject();
+              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
             }).join("\\n");
             throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
           }
+          task = matches[0];
         }
       `;
+    } else {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
     }
 
     const script = `
       ${TASK_MAPPER}
-      ${findTaskCode}
+      ${findTaskScript}
       ${actionCode}
       JSON.stringify(mapTask(task));
     `;
@@ -951,10 +1002,10 @@ Examples:
 const AddTagInputSchema = z.object({
   taskId: z.string()
     .optional()
-    .describe("The task ID to add the tag to - takes priority if both taskId and taskName provided"),
+    .describe("The task ID to add the tag to. Takes priority if both taskId and taskName are provided."),
   taskName: z.string()
     .optional()
-    .describe("The task name to search for - used if taskId not provided"),
+    .describe("The task name to search for. Used if taskId is not provided."),
   tagName: z.string()
     .describe("The name of the tag to add")
 }).strict().refine(
@@ -968,12 +1019,12 @@ server.registerTool(
     title: "Add Tag to Task",
     description: `Add a tag to a task in OmniFocus.
 
-Args:
-  - taskId (string): The task's ID - takes priority if both provided
-  - taskName (string): The task name to search for - used if taskId not provided
-  - tagName (string): Name of the tag to add
+Use either the task ID or task name to identify the task.
 
-At least one of taskId or taskName must be provided.
+Args:
+  - taskId (string, optional): The task's ID. Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
+  - tagName (string): Name of the tag to add
 
 Returns:
   The updated task object
@@ -993,50 +1044,51 @@ Examples:
     const { taskId, taskName, tagName } = params;
     const escapeTagName = tagName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
-    let findTaskCode: string;
+    let findTaskScript: string;
     if (taskId) {
-      findTaskCode = `
+      // Use ID if provided (takes priority)
+      findTaskScript = `
         var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
         if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
       `;
-    } else {
-      // taskName must be provided due to schema validation
-      const escapedName = taskName!.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      findTaskCode = `
-        var searchName = "${escapedName}";
-        var exactMatches = doc.flattenedTasks().filter(function(t) {
-          return t.name() === searchName;
-        });
+    } else if (taskName) {
+      // Search by name
+      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      findTaskScript = `
+        var allTasks = doc.flattenedTasks();
 
-        if (exactMatches.length === 1) {
-          var task = exactMatches[0];
-        } else if (exactMatches.length > 1) {
-          var matchList = exactMatches.slice(0, 10).map(function(t) {
-            return "- " + t.name() + " (ID: " + t.id() + ", Project: " + (t.containingProject() ? t.containingProject().name() : "Inbox") + ")";
-          }).join("\\n");
-          throw new Error("Multiple tasks found with exact name '${escapedName}'. Please use taskId instead:\\n" + matchList);
-        } else {
-          var partialMatches = doc.flattenedTasks().filter(function(t) {
-            return t.name().toLowerCase().indexOf(searchName.toLowerCase()) !== -1;
+        // Try exact match first
+        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+
+        // If no exact match, try case-insensitive partial match
+        if (!task) {
+          var searchLower = "${escapedName.toLowerCase()}";
+          var matches = allTasks.filter(function(t) {
+            return t.name().toLowerCase().indexOf(searchLower) !== -1;
           });
 
-          if (partialMatches.length === 0) {
-            throw new Error("No tasks found matching name: ${escapedName}");
-          } else if (partialMatches.length === 1) {
-            var task = partialMatches[0];
-          } else {
-            var matchList = partialMatches.slice(0, 10).map(function(t) {
-              return "- " + t.name() + " (ID: " + t.id() + ", Project: " + (t.containingProject() ? t.containingProject().name() : "Inbox") + ")";
+          if (matches.length === 0) {
+            throw new Error("No task found matching name: ${escapedName}");
+          } else if (matches.length > 1) {
+            var matchList = matches.map(function(t) {
+              var proj = t.containingProject();
+              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
             }).join("\\n");
             throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
           }
+          task = matches[0];
         }
       `;
+    } else {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
     }
 
     const script = `
       ${TASK_MAPPER}
-      ${findTaskCode}
+      ${findTaskScript}
 
       var tag = doc.flattenedTags().find(function(t) { return t.name() === "${escapeTagName}"; });
       if (!tag) { throw new Error("Tag not found: ${escapeTagName}"); }
@@ -1075,10 +1127,10 @@ Examples:
 const RemoveTagInputSchema = z.object({
   taskId: z.string()
     .optional()
-    .describe("The task ID to remove the tag from - takes priority if both taskId and taskName provided"),
+    .describe("The task ID to remove the tag from. Takes priority if both taskId and taskName are provided."),
   taskName: z.string()
     .optional()
-    .describe("The task name to search for - used if taskId not provided"),
+    .describe("The task name to search for. Used if taskId is not provided."),
   tagName: z.string()
     .describe("The name of the tag to remove")
 }).strict().refine(
@@ -1092,19 +1144,19 @@ server.registerTool(
     title: "Remove Tag from Task",
     description: `Remove a tag from a task in OmniFocus.
 
-Args:
-  - taskId (string): The task's ID - takes priority if both provided
-  - taskName (string): The task name to search for - used if taskId not provided
-  - tagName (string): Name of the tag to remove
+Use either the task ID or task name to identify the task.
 
-At least one of taskId or taskName must be provided.
+Args:
+  - taskId (string, optional): The task's ID. Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
+  - tagName (string): Name of the tag to remove
 
 Returns:
   The updated task object
 
 Examples:
   - By ID: { taskId: "abc123", tagName: "Urgent" }
-  - By name: { taskName: "Write report", tagName: "Urgent" }`,
+  - By name: { taskName: "Old task", tagName: "Done" }`,
     inputSchema: RemoveTagInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -1117,50 +1169,51 @@ Examples:
     const { taskId, taskName, tagName } = params;
     const escapeTagName = tagName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
-    let findTaskCode: string;
+    let findTaskScript: string;
     if (taskId) {
-      findTaskCode = `
+      // Use ID if provided (takes priority)
+      findTaskScript = `
         var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
         if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
       `;
-    } else {
-      // taskName must be provided due to schema validation
-      const escapedName = taskName!.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      findTaskCode = `
-        var searchName = "${escapedName}";
-        var exactMatches = doc.flattenedTasks().filter(function(t) {
-          return t.name() === searchName;
-        });
+    } else if (taskName) {
+      // Search by name
+      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      findTaskScript = `
+        var allTasks = doc.flattenedTasks();
 
-        if (exactMatches.length === 1) {
-          var task = exactMatches[0];
-        } else if (exactMatches.length > 1) {
-          var matchList = exactMatches.slice(0, 10).map(function(t) {
-            return "- " + t.name() + " (ID: " + t.id() + ", Project: " + (t.containingProject() ? t.containingProject().name() : "Inbox") + ")";
-          }).join("\\n");
-          throw new Error("Multiple tasks found with exact name '${escapedName}'. Please use taskId instead:\\n" + matchList);
-        } else {
-          var partialMatches = doc.flattenedTasks().filter(function(t) {
-            return t.name().toLowerCase().indexOf(searchName.toLowerCase()) !== -1;
+        // Try exact match first
+        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+
+        // If no exact match, try case-insensitive partial match
+        if (!task) {
+          var searchLower = "${escapedName.toLowerCase()}";
+          var matches = allTasks.filter(function(t) {
+            return t.name().toLowerCase().indexOf(searchLower) !== -1;
           });
 
-          if (partialMatches.length === 0) {
-            throw new Error("No tasks found matching name: ${escapedName}");
-          } else if (partialMatches.length === 1) {
-            var task = partialMatches[0];
-          } else {
-            var matchList = partialMatches.slice(0, 10).map(function(t) {
-              return "- " + t.name() + " (ID: " + t.id() + ", Project: " + (t.containingProject() ? t.containingProject().name() : "Inbox") + ")";
+          if (matches.length === 0) {
+            throw new Error("No task found matching name: ${escapedName}");
+          } else if (matches.length > 1) {
+            var matchList = matches.map(function(t) {
+              var proj = t.containingProject();
+              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
             }).join("\\n");
             throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
           }
+          task = matches[0];
         }
       `;
+    } else {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
     }
 
     const script = `
       ${TASK_MAPPER}
-      ${findTaskCode}
+      ${findTaskScript}
 
       var tagOnTask = task.tags().find(function(t) { return t.name() === "${escapeTagName}"; });
       if (tagOnTask) {
@@ -1488,6 +1541,116 @@ Examples:
       return {
         isError: true,
         content: [{ type: "text", text: `Error getting flagged tasks: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Get Planned Tasks
+// ============================================================================
+
+const GetPlannedTasksInputSchema = z.object({
+  daysAhead: z.number()
+    .int()
+    .min(0)
+    .max(365)
+    .default(7)
+    .describe("Number of days ahead to look (0 = today only)"),
+  includeOverdue: z.boolean()
+    .default(true)
+    .describe("Include overdue planned tasks"),
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(50)
+    .describe("Maximum tasks to return")
+}).strict();
+
+server.registerTool(
+  "omnifocus_get_planned_tasks",
+  {
+    title: "Get Planned Tasks",
+    description: `Get tasks that are planned within a specified timeframe.
+
+Planned dates represent when you intend to work on a task, separate from the due date.
+
+Args:
+  - daysAhead (number): Days to look ahead, 0-365 (default: 7)
+  - includeOverdue (boolean): Include overdue planned tasks (default: true)
+  - limit (number): Max tasks, 1-500 (default: 50)
+
+Returns:
+  Array of planned tasks sorted by planned date
+
+Examples:
+  - Planned this week: {}
+  - Planned today: { daysAhead: 0 }
+  - Planned in 30 days: { daysAhead: 30 }`,
+    inputSchema: GetPlannedTasksInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { daysAhead, includeOverdue, limit } = params;
+
+    const script = `
+      ${TASK_MAPPER}
+      var now = new Date();
+      var futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + ${daysAhead});
+      futureDate.setHours(23, 59, 59, 999);
+
+      var tasks = doc.flattenedTasks().filter(function(t) {
+        if (t.completed()) return false;
+        var planned = null;
+        try {
+          planned = t.plannedDate ? t.plannedDate() : null;
+        } catch(e) {}
+        if (!planned) return false;
+        ${includeOverdue ? '' : 'if (planned < now) return false;'}
+        return planned <= futureDate;
+      }).sort(function(a, b) {
+        var aPlanned = null;
+        var bPlanned = null;
+        try {
+          aPlanned = a.plannedDate ? a.plannedDate() : null;
+          bPlanned = b.plannedDate ? b.plannedDate() : null;
+        } catch(e) {}
+        if (!aPlanned || !bPlanned) return 0;
+        return aPlanned - bPlanned;
+      }).slice(0, ${limit});
+
+      JSON.stringify(tasks.map(mapTask));
+    `;
+
+    try {
+      const tasks = await executeAndParseJSON<TaskData[]>(script);
+
+      if (tasks.length === 0) {
+        return {
+          content: [{ type: "text", text: `No tasks planned within ${daysAhead} days.` }]
+        };
+      }
+
+      const output = {
+        count: tasks.length,
+        daysAhead,
+        tasks
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error getting planned tasks: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }

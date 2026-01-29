@@ -8,9 +8,10 @@ This MCP server provides access to OmniFocus functionality:
 
 ### Task Management
 - **List inbox tasks** - View and filter tasks in your inbox
-- **Create tasks** - Add new tasks with full property support (due dates, tags, notes, etc.)
+- **Create tasks** - Add new tasks with full property support (due dates, planned dates, tags, notes, etc.)
 - **Complete/Drop tasks** - Mark tasks as done or dropped
 - **Get due tasks** - Find tasks due within a timeframe
+- **Get planned tasks** - Find tasks planned within a timeframe
 - **Get flagged tasks** - List all flagged items
 - **Add/remove tags from tasks** - Manage task tags
 
@@ -129,21 +130,27 @@ Create a new task.
   "projectName": "Work",
   "dueDate": "2024-12-31T17:00:00",
   "deferDate": "2024-12-01T09:00:00",
+  "plannedDate": "2024-12-15T09:00:00",
   "flagged": true,
   "estimatedMinutes": 60,
   "tagNames": ["Review", "Important"]
 }
 ```
 
+**Planned Date vs Due Date:**
+- `dueDate`: When the task must be completed (deadline)
+- `plannedDate`: When you intend to work on the task (planning)
+- This distinction is crucial for separating deadlines from scheduled work time
+
 ### omnifocus_complete_task
-Mark a task as complete or dropped. Can use either task ID or task name.
+Mark a task as complete or dropped. You can identify the task by either ID or name.
 ```json
 {
   "taskId": "abc123",
   "action": "complete"
 }
 ```
-Or by name:
+Or using task name:
 ```json
 {
   "taskName": "Write documentation",
@@ -153,14 +160,14 @@ Or by name:
 Action can be `"complete"` (default) or `"drop"`. If both `taskId` and `taskName` are provided, `taskId` takes priority.
 
 ### omnifocus_add_tag_to_task
-Add a tag to a task. Can use either task ID or task name.
+Add a tag to a task. You can identify the task by either ID or name.
 ```json
 {
   "taskId": "abc123",
   "tagName": "Urgent"
 }
 ```
-Or by name:
+Or using task name:
 ```json
 {
   "taskName": "Write report",
@@ -170,18 +177,18 @@ Or by name:
 If both `taskId` and `taskName` are provided, `taskId` takes priority.
 
 ### omnifocus_remove_tag_from_task
-Remove a tag from a task. Can use either task ID or task name.
+Remove a tag from a task. You can identify the task by either ID or name.
 ```json
 {
   "taskId": "abc123",
   "tagName": "Urgent"
 }
 ```
-Or by name:
+Or using task name:
 ```json
 {
-  "taskName": "Write report",
-  "tagName": "Urgent"
+  "taskName": "Old task",
+  "tagName": "Done"
 }
 ```
 If both `taskId` and `taskName` are provided, `taskId` takes priority.
@@ -211,6 +218,16 @@ Get flagged tasks.
 ```json
 {
   "includeCompleted": false,
+  "limit": 50
+}
+```
+
+### omnifocus_get_planned_tasks
+Get tasks planned within a timeframe.
+```json
+{
+  "daysAhead": 7,
+  "includeOverdue": true,
   "limit": 50
 }
 ```
