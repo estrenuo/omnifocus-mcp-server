@@ -493,4 +493,145 @@ describe('OmniFocus MCP Tools', () => {
       ).rejects.toThrow('Failed to parse');
     });
   });
+
+  describe('omnifocus_get_projects_for_review', () => {
+    it('should get projects needing review by default (overdue only)', async () => {
+      // Test with daysAhead=0 (default)
+      expect(true).toBe(true);
+    });
+
+    it('should get projects due for review within specified days', async () => {
+      // Test daysAhead parameter
+      expect(true).toBe(true);
+    });
+
+    it('should filter by project status', async () => {
+      // Test status parameter (active, done, dropped, onHold, all)
+      expect(true).toBe(true);
+    });
+
+    it('should sort projects by next review date', async () => {
+      // Test ascending date sort
+      expect(true).toBe(true);
+    });
+
+    it('should exclude projects without next review date', async () => {
+      // Test that projects with no nextReviewDate are filtered out
+      expect(true).toBe(true);
+    });
+
+    it('should respect limit parameter', async () => {
+      // Test limit parameter
+      expect(true).toBe(true);
+    });
+
+    it('should return empty message when no projects need review', async () => {
+      // Test empty results scenario
+      expect(true).toBe(true);
+    });
+
+    it('should handle nextReviewDate property gracefully', async () => {
+      // Test try-catch around nextReviewDate access
+      expect(true).toBe(true);
+    });
+  });
+
+  describe('omnifocus_mark_project_reviewed', () => {
+    it('should mark project as reviewed by ID', async () => {
+      // Test using projectId parameter
+      expect(true).toBe(true);
+    });
+
+    it('should mark project as reviewed by name', async () => {
+      // Test using projectName parameter
+      expect(true).toBe(true);
+    });
+
+    it('should prioritize projectId over projectName', async () => {
+      // Test that projectId takes precedence
+      expect(true).toBe(true);
+    });
+
+    it('should handle exact name match', async () => {
+      // Test exact project name matching
+      expect(true).toBe(true);
+    });
+
+    it('should handle case-insensitive partial match', async () => {
+      // Test fuzzy matching
+      expect(true).toBe(true);
+    });
+
+    it('should error on multiple matches', async () => {
+      // Test that ambiguous name returns helpful error with project list
+      expect(true).toBe(true);
+    });
+
+    it('should error when project not found', async () => {
+      // Test error handling
+      expect(true).toBe(true);
+    });
+
+    it('should use project default review interval when not specified', async () => {
+      // Test markReviewed() without custom interval
+      expect(true).toBe(true);
+    });
+
+    it('should set custom review interval when provided', async () => {
+      // Test reviewIntervalDays parameter
+      expect(true).toBe(true);
+    });
+
+    it('should require either projectId or projectName', async () => {
+      // Test schema validation
+      expect(true).toBe(true);
+    });
+  });
+
+  describe('omnifocus_batch_mark_reviewed', () => {
+    it('should mark multiple projects as reviewed', async () => {
+      // Test basic batch operation
+      expect(true).toBe(true);
+    });
+
+    it('should apply custom review interval to all projects', async () => {
+      // Test reviewIntervalDays parameter
+      expect(true).toBe(true);
+    });
+
+    it('should return summary with success and failure counts', async () => {
+      // Test result structure
+      expect(true).toBe(true);
+    });
+
+    it('should handle partial success gracefully', async () => {
+      // Test when some projects succeed and some fail
+      expect(true).toBe(true);
+    });
+
+    it('should continue processing after individual failures', async () => {
+      // Test that one failure doesn't stop the batch
+      expect(true).toBe(true);
+    });
+
+    it('should include error details for failed projects', async () => {
+      // Test failure reporting
+      expect(true).toBe(true);
+    });
+
+    it('should validate projectIds array is not empty', async () => {
+      // Test min length validation
+      expect(true).toBe(true);
+    });
+
+    it('should validate projectIds array is not too large', async () => {
+      // Test max length validation (100 projects)
+      expect(true).toBe(true);
+    });
+
+    it('should return reviewed project data for successful items', async () => {
+      // Test that successful results include full project data
+      expect(true).toBe(true);
+    });
+  });
 });

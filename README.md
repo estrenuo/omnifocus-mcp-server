@@ -17,6 +17,9 @@ This MCP server provides access to OmniFocus functionality:
 
 ### Project Management
 - **List projects** - View projects with status filtering
+- **Get projects for review** - Find projects needing review based on next review date
+- **Mark project reviewed** - Update a project's review status and next review date
+- **Batch mark reviewed** - Efficiently review multiple projects at once
 
 ### Organization
 - **List folders** - View folder hierarchy
@@ -231,6 +234,68 @@ Get tasks planned within a timeframe.
   "limit": 50
 }
 ```
+
+### omnifocus_get_projects_for_review
+Get projects that need review based on their next review date. Perfect for GTD practitioners following the review workflow.
+```json
+{
+  "daysAhead": 0,
+  "status": "active",
+  "limit": 50
+}
+```
+Parameters:
+- `daysAhead`: How many days ahead to look (0 = overdue reviews only)
+- `status`: Filter by project status ("active", "done", "dropped", "onHold", "all")
+- `limit`: Maximum number of projects to return (1-500)
+
+### omnifocus_mark_project_reviewed
+Mark a project as reviewed and update its next review date. You can identify the project by either ID or name.
+```json
+{
+  "projectId": "abc123"
+}
+```
+Or using project name:
+```json
+{
+  "projectName": "Weekly Review"
+}
+```
+With custom review interval:
+```json
+{
+  "projectName": "Work Project",
+  "reviewIntervalDays": 14
+}
+```
+Parameters:
+- `projectId` or `projectName`: Identifies the project (ID takes priority)
+- `reviewIntervalDays` (optional): Custom review interval in days. If not provided, uses the project's existing review interval.
+
+### omnifocus_batch_mark_reviewed
+Mark multiple projects as reviewed in one efficient operation.
+```json
+{
+  "projectIds": ["id1", "id2", "id3"]
+}
+```
+With custom review interval for all:
+```json
+{
+  "projectIds": ["id1", "id2", "id3"],
+  "reviewIntervalDays": 7
+}
+```
+Parameters:
+- `projectIds`: Array of project IDs to mark as reviewed (1-100 projects)
+- `reviewIntervalDays` (optional): Custom review interval to apply to all projects
+
+Returns a summary with:
+- Count of successful reviews
+- Count of failures
+- Full project data for successful reviews
+- Error details for any failures
 
 ## Date Formats
 
