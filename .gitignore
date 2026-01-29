@@ -2,3 +2,10 @@ node_modules/
 dist/
 CLAUDE.md
 .DS_Store
+
+# Test coverage
+coverage/
+*.lcov
+
+# Vitest
+.vitest/
