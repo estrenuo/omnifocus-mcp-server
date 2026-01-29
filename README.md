@@ -147,32 +147,55 @@ To create a subtask, include the `parentTaskId` parameter:
 ```
 
 ### omnifocus_complete_task
-Mark a task as complete or dropped.
+Mark a task as complete or dropped. You can identify the task by either ID or name.
 ```json
 {
   "taskId": "abc123",
   "action": "complete"
 }
 ```
-Action can be `"complete"` (default) or `"drop"`.
+Or using task name:
+```json
+{
+  "taskName": "Write documentation",
+  "action": "complete"
+}
+```
+Action can be `"complete"` (default) or `"drop"`. If both `taskId` and `taskName` are provided, `taskId` takes priority.
 
 ### omnifocus_add_tag_to_task
-Add a tag to a task.
+Add a tag to a task. You can identify the task by either ID or name.
 ```json
 {
   "taskId": "abc123",
   "tagName": "Urgent"
 }
 ```
+Or using task name:
+```json
+{
+  "taskName": "Write report",
+  "tagName": "Urgent"
+}
+```
+If both `taskId` and `taskName` are provided, `taskId` takes priority.
 
 ### omnifocus_remove_tag_from_task
-Remove a tag from a task.
+Remove a tag from a task. You can identify the task by either ID or name.
 ```json
 {
   "taskId": "abc123",
   "tagName": "Urgent"
 }
 ```
+Or using task name:
+```json
+{
+  "taskName": "Old task",
+  "tagName": "Done"
+}
+```
+If both `taskId` and `taskName` are provided, `taskId` takes priority.
 
 ### omnifocus_search
 Search across OmniFocus.

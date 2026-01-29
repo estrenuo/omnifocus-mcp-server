@@ -765,11 +765,18 @@ Examples:
 
 const CompleteTaskInputSchema = z.object({
   taskId: z.string()
-    .describe("The task ID (primaryKey) to update"),
+    .optional()
+    .describe("The task ID (primaryKey) to update. Takes priority if both taskId and taskName are provided."),
+  taskName: z.string()
+    .optional()
+    .describe("The task name to search for. Used if taskId is not provided."),
   action: z.enum(["complete", "drop"])
     .default("complete")
     .describe("Action to perform: 'complete' marks the task done, 'drop' marks it as dropped/cancelled")
-}).strict();
+}).strict().refine(
+  (data) => data.taskId || data.taskName,
+  { message: "Either taskId or taskName must be provided" }
+);
 
 server.registerTool(
   "omnifocus_complete_task",
@@ -777,18 +784,20 @@ server.registerTool(
     title: "Complete or Drop Task",
     description: `Mark a task as complete or dropped in OmniFocus.
 
-Use the task ID from list or search results.
+Use either the task ID from list/search results, or the task name for natural language interactions.
 
 Args:
-  - taskId (string): The task's ID (primaryKey)
+  - taskId (string, optional): The task's ID (primaryKey). Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
   - action (string): 'complete' (default) or 'drop'
 
 Returns:
   The updated task object
 
 Examples:
-  - Complete a task: { taskId: "abc123" }
-  - Drop a task: { taskId: "abc123", action: "drop" }`,
+  - Complete by ID: { taskId: "abc123" }
+  - Complete by name: { taskName: "Write documentation" }
+  - Drop by name: { taskName: "Old task", action: "drop" }`,
     inputSchema: CompleteTaskInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -798,16 +807,57 @@ Examples:
     }
   },
   async (params) => {
-    const { taskId, action } = params;
+    const { taskId, taskName, action } = params;
 
     const actionCode = action === "drop"
       ? "task.markDropped();"
       : "task.markComplete();";
 
+    let findTaskScript: string;
+    if (taskId) {
+      // Use ID if provided (takes priority)
+      findTaskScript = `
+        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
+        if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+      `;
+    } else if (taskName) {
+      // Search by name
+      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      findTaskScript = `
+        var allTasks = doc.flattenedTasks();
+
+        // Try exact match first
+        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+
+        // If no exact match, try case-insensitive partial match
+        if (!task) {
+          var searchLower = "${escapedName.toLowerCase()}";
+          var matches = allTasks.filter(function(t) {
+            return t.name().toLowerCase().indexOf(searchLower) !== -1;
+          });
+
+          if (matches.length === 0) {
+            throw new Error("No task found matching name: ${escapedName}");
+          } else if (matches.length > 1) {
+            var matchList = matches.map(function(t) {
+              var proj = t.containingProject();
+              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
+            }).join("\\n");
+            throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
+          }
+          task = matches[0];
+        }
+      `;
+    } else {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
+    }
+
     const script = `
       ${TASK_MAPPER}
-      var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
-      if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+      ${findTaskScript}
       ${actionCode}
       JSON.stringify(mapTask(task));
     `;
@@ -837,10 +887,17 @@ Examples:
 
 const AddTagInputSchema = z.object({
   taskId: z.string()
-    .describe("The task ID to add the tag to"),
+    .optional()
+    .describe("The task ID to add the tag to. Takes priority if both taskId and taskName are provided."),
+  taskName: z.string()
+    .optional()
+    .describe("The task name to search for. Used if taskId is not provided."),
   tagName: z.string()
     .describe("The name of the tag to add")
-}).strict();
+}).strict().refine(
+  (data) => data.taskId || data.taskName,
+  { message: "Either taskId or taskName must be provided" }
+);
 
 server.registerTool(
   "omnifocus_add_tag_to_task",
@@ -848,15 +905,19 @@ server.registerTool(
     title: "Add Tag to Task",
     description: `Add a tag to a task in OmniFocus.
 
+Use either the task ID or task name to identify the task.
+
 Args:
-  - taskId (string): The task's ID
+  - taskId (string, optional): The task's ID. Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
   - tagName (string): Name of the tag to add
 
 Returns:
   The updated task object
 
 Examples:
-  - { taskId: "abc123", tagName: "Urgent" }`,
+  - By ID: { taskId: "abc123", tagName: "Urgent" }
+  - By name: { taskName: "Write report", tagName: "Urgent" }`,
     inputSchema: AddTagInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -866,13 +927,54 @@ Examples:
     }
   },
   async (params) => {
-    const { taskId, tagName } = params;
+    const { taskId, taskName, tagName } = params;
     const escapeTagName = tagName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+    let findTaskScript: string;
+    if (taskId) {
+      // Use ID if provided (takes priority)
+      findTaskScript = `
+        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
+        if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+      `;
+    } else if (taskName) {
+      // Search by name
+      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      findTaskScript = `
+        var allTasks = doc.flattenedTasks();
+
+        // Try exact match first
+        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+
+        // If no exact match, try case-insensitive partial match
+        if (!task) {
+          var searchLower = "${escapedName.toLowerCase()}";
+          var matches = allTasks.filter(function(t) {
+            return t.name().toLowerCase().indexOf(searchLower) !== -1;
+          });
+
+          if (matches.length === 0) {
+            throw new Error("No task found matching name: ${escapedName}");
+          } else if (matches.length > 1) {
+            var matchList = matches.map(function(t) {
+              var proj = t.containingProject();
+              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
+            }).join("\\n");
+            throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
+          }
+          task = matches[0];
+        }
+      `;
+    } else {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
+    }
 
     const script = `
       ${TASK_MAPPER}
-      var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
-      if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+      ${findTaskScript}
 
       var tag = doc.flattenedTags().find(function(t) { return t.name() === "${escapeTagName}"; });
       if (!tag) { throw new Error("Tag not found: ${escapeTagName}"); }
@@ -910,10 +1012,17 @@ Examples:
 
 const RemoveTagInputSchema = z.object({
   taskId: z.string()
-    .describe("The task ID to remove the tag from"),
+    .optional()
+    .describe("The task ID to remove the tag from. Takes priority if both taskId and taskName are provided."),
+  taskName: z.string()
+    .optional()
+    .describe("The task name to search for. Used if taskId is not provided."),
   tagName: z.string()
     .describe("The name of the tag to remove")
-}).strict();
+}).strict().refine(
+  (data) => data.taskId || data.taskName,
+  { message: "Either taskId or taskName must be provided" }
+);
 
 server.registerTool(
   "omnifocus_remove_tag_from_task",
@@ -921,15 +1030,19 @@ server.registerTool(
     title: "Remove Tag from Task",
     description: `Remove a tag from a task in OmniFocus.
 
+Use either the task ID or task name to identify the task.
+
 Args:
-  - taskId (string): The task's ID
+  - taskId (string, optional): The task's ID. Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
   - tagName (string): Name of the tag to remove
 
 Returns:
   The updated task object
 
 Examples:
-  - { taskId: "abc123", tagName: "Urgent" }`,
+  - By ID: { taskId: "abc123", tagName: "Urgent" }
+  - By name: { taskName: "Old task", tagName: "Done" }`,
     inputSchema: RemoveTagInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -939,13 +1052,54 @@ Examples:
     }
   },
   async (params) => {
-    const { taskId, tagName } = params;
+    const { taskId, taskName, tagName } = params;
     const escapeTagName = tagName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+    let findTaskScript: string;
+    if (taskId) {
+      // Use ID if provided (takes priority)
+      findTaskScript = `
+        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
+        if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+      `;
+    } else if (taskName) {
+      // Search by name
+      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      findTaskScript = `
+        var allTasks = doc.flattenedTasks();
+
+        // Try exact match first
+        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+
+        // If no exact match, try case-insensitive partial match
+        if (!task) {
+          var searchLower = "${escapedName.toLowerCase()}";
+          var matches = allTasks.filter(function(t) {
+            return t.name().toLowerCase().indexOf(searchLower) !== -1;
+          });
+
+          if (matches.length === 0) {
+            throw new Error("No task found matching name: ${escapedName}");
+          } else if (matches.length > 1) {
+            var matchList = matches.map(function(t) {
+              var proj = t.containingProject();
+              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
+            }).join("\\n");
+            throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
+          }
+          task = matches[0];
+        }
+      `;
+    } else {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
+    }
 
     const script = `
       ${TASK_MAPPER}
-      var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
-      if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+      ${findTaskScript}
 
       var tagOnTask = task.tags().find(function(t) { return t.name() === "${escapeTagName}"; });
       if (tagOnTask) {
