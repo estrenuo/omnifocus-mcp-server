@@ -28,6 +28,7 @@ interface TaskData {
   flagged: boolean;
   dueDate: string | null;
   deferDate: string | null;
+  plannedDate: string | null;
   estimatedMinutes: number | null;
   tags: string[];
   projectName: string | null;
@@ -153,6 +154,10 @@ function mapTask(t) {
 
   var dueDate = t.dueDate();
   var deferDate = t.deferDate();
+  var plannedDate = null;
+  try {
+    plannedDate = t.plannedDate ? t.plannedDate() : null;
+  } catch(e) {}
   var containingProj = t.containingProject();
   var tagsList = t.tags();
 
@@ -185,6 +190,7 @@ function mapTask(t) {
     flagged: t.flagged(),
     dueDate: dueDate ? dueDate.toISOString() : null,
     deferDate: deferDate ? deferDate.toISOString() : null,
+    plannedDate: plannedDate ? plannedDate.toISOString() : null,
     estimatedMinutes: t.estimatedMinutes(),
     tags: tagsList.map(function(tag) { return tag.name(); }),
     projectName: containingProj ? containingProj.name() : null,
@@ -642,6 +648,9 @@ const CreateTaskInputSchema = z.object({
   deferDate: z.string()
     .optional()
     .describe("Defer/start date in ISO 8601 format"),
+  plannedDate: z.string()
+    .optional()
+    .describe("Planned date in ISO 8601 format - when you intend to work on the task"),
   flagged: z.boolean()
     .default(false)
     .describe("Whether to flag the task"),
@@ -662,15 +671,15 @@ server.registerTool(
     title: "Create Task",
     description: `Create a new task in OmniFocus.
 
-Creates a task in the inbox, a specific project, or as a subtask of another task. Tags, due dates, and other properties can be set.
+Creates a task in the inbox or a specific project. Tags, due dates, planned dates, and other properties can be set.
 
 Args:
   - name (string): Task name/title (required)
   - note (string): Optional note/description
   - projectName (string): Project to add to (inbox if not specified)
-  - parentTaskId (string): Parent task ID to create this as a subtask
-  - dueDate (string): Due date in ISO 8601 format
+  - dueDate (string): Due date in ISO 8601 format - when the task must be completed
   - deferDate (string): Defer/start date in ISO 8601 format
+  - plannedDate (string): Planned date in ISO 8601 format - when you intend to work on the task
   - flagged (boolean): Flag the task (default: false)
   - estimatedMinutes (number): Time estimate in minutes
   - tagNames (array): Tag names to apply
@@ -681,8 +690,8 @@ Returns:
 Examples:
   - Simple task: { name: "Buy groceries" }
   - Task with details: { name: "Review report", projectName: "Work", dueDate: "2024-12-31T17:00:00", flagged: true }
-  - Task with tags: { name: "Call John", tagNames: ["Calls", "Urgent"] }
-  - Subtask: { name: "Research options", parentTaskId: "abc123" }`,
+  - Task with planning: { name: "Write article", plannedDate: "2024-12-15T09:00:00", dueDate: "2024-12-31T17:00:00" }
+  - Task with tags: { name: "Call John", tagNames: ["Calls", "Urgent"] }`,
     inputSchema: CreateTaskInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -692,8 +701,8 @@ Examples:
     }
   },
   async (params) => {
-    const { name, note, projectName, parentTaskId, dueDate, deferDate, flagged, estimatedMinutes, tagNames } = params;
-
+    const { name, note, projectName, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, tagNames } = params;
+    
     // Escape for JavaScript string
     const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
     const escapeNote = note ? note.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") : "";
@@ -728,6 +737,7 @@ Examples:
       ${note ? `task.note = "${escapeNote}";` : ""}
       ${dueDate ? `task.dueDate = new Date("${dueDate}");` : ""}
       ${deferDate ? `task.deferDate = new Date("${deferDate}");` : ""}
+      ${plannedDate ? `try { task.plannedDate = new Date("${plannedDate}"); } catch(e) {}` : ""}
       ${flagged ? `task.flagged = true;` : ""}
       ${estimatedMinutes ? `task.estimatedMinutes = ${estimatedMinutes};` : ""}
       ${tagNames && tagNames.length > 0 ? `
@@ -1433,48 +1443,48 @@ Examples:
 );
 
 // ============================================================================
-// Tool: Get Subtasks
+// Tool: Get Planned Tasks
 // ============================================================================
 
-const GetSubtasksInputSchema = z.object({
-  taskId: z.string()
-    .describe("The parent task ID to get subtasks for"),
-  includeCompleted: z.boolean()
-    .default(false)
-    .describe("Include completed subtasks"),
-  recursive: z.boolean()
-    .default(false)
-    .describe("Recursively get all nested subtasks (all descendants)"),
-  maxDepth: z.number()
+const GetPlannedTasksInputSchema = z.object({
+  daysAhead: z.number()
+    .int()
+    .min(0)
+    .max(365)
+    .default(7)
+    .describe("Number of days ahead to look (0 = today only)"),
+  includeOverdue: z.boolean()
+    .default(true)
+    .describe("Include overdue planned tasks"),
+  limit: z.number()
     .int()
     .min(1)
-    .max(10)
-    .optional()
-    .describe("Maximum depth for recursive subtask retrieval (default: unlimited)")
+    .max(500)
+    .default(50)
+    .describe("Maximum tasks to return")
 }).strict();
 
 server.registerTool(
-  "omnifocus_get_subtasks",
+  "omnifocus_get_planned_tasks",
   {
-    title: "Get Subtasks",
-    description: `Get all subtasks (child tasks) of a specific task.
+    title: "Get Planned Tasks",
+    description: `Get tasks that are planned within a specified timeframe.
 
-Retrieves the hierarchical subtasks of a parent task. Can optionally retrieve all nested descendants.
+Planned dates represent when you intend to work on a task, separate from the due date.
 
 Args:
-  - taskId (string): The parent task's ID
-  - includeCompleted (boolean): Include completed subtasks (default: false)
-  - recursive (boolean): Get all nested subtasks recursively (default: false)
-  - maxDepth (number): Maximum depth for recursive retrieval, 1-10 (optional)
+  - daysAhead (number): Days to look ahead, 0-365 (default: 7)
+  - includeOverdue (boolean): Include overdue planned tasks (default: true)
+  - limit (number): Max tasks, 1-500 (default: 50)
 
 Returns:
-  Array of subtask objects with full task details including their own children
+  Array of planned tasks sorted by planned date
 
 Examples:
-  - Get direct children: { taskId: "abc123" }
-  - Get all descendants: { taskId: "abc123", recursive: true }
-  - Get 2 levels deep: { taskId: "abc123", recursive: true, maxDepth: 2 }`,
-    inputSchema: GetSubtasksInputSchema,
+  - Planned this week: {}
+  - Planned today: { daysAhead: 0 }
+  - Planned in 30 days: { daysAhead: 30 }`,
+    inputSchema: GetPlannedTasksInputSchema,
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
@@ -1483,63 +1493,60 @@ Examples:
     }
   },
   async (params) => {
-    const { taskId, includeCompleted, recursive, maxDepth } = params;
+    const { daysAhead, includeOverdue, limit } = params;
 
     const script = `
       ${TASK_MAPPER}
+      var now = new Date();
+      var futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + ${daysAhead});
+      futureDate.setHours(23, 59, 59, 999);
 
-      function getSubtasks(task, depth, maxDepth) {
-        var children = task.tasks();
-        ${!includeCompleted ? 'children = children.filter(function(t) { return !t.completed(); });' : ''}
+      var tasks = doc.flattenedTasks().filter(function(t) {
+        if (t.completed()) return false;
+        var planned = null;
+        try {
+          planned = t.plannedDate ? t.plannedDate() : null;
+        } catch(e) {}
+        if (!planned) return false;
+        ${includeOverdue ? '' : 'if (planned < now) return false;'}
+        return planned <= futureDate;
+      }).sort(function(a, b) {
+        var aPlanned = null;
+        var bPlanned = null;
+        try {
+          aPlanned = a.plannedDate ? a.plannedDate() : null;
+          bPlanned = b.plannedDate ? b.plannedDate() : null;
+        } catch(e) {}
+        if (!aPlanned || !bPlanned) return 0;
+        return aPlanned - bPlanned;
+      }).slice(0, ${limit});
 
-        var results = [];
-        for (var i = 0; i < children.length; i++) {
-          var child = children[i];
-          var mapped = mapTask(child);
-          mapped.depth = depth;
-          results.push(mapped);
-
-          ${recursive ? `
-          if (!maxDepth || depth < maxDepth) {
-            var grandchildren = getSubtasks(child, depth + 1, maxDepth);
-            results = results.concat(grandchildren);
-          }
-          ` : ''}
-        }
-        return results;
-      }
-
-      var parentTask = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
-      if (!parentTask) { throw new Error("Task not found with ID: ${taskId}"); }
-
-      var subtasks = getSubtasks(parentTask, 1, ${maxDepth ?? 'null'});
-      JSON.stringify({
-        parentTask: mapTask(parentTask),
-        subtaskCount: subtasks.length,
-        subtasks: subtasks
-      });
+      JSON.stringify(tasks.map(mapTask));
     `;
 
     try {
-      const result = await executeAndParseJSON<{
-        parentTask: TaskData;
-        subtaskCount: number;
-        subtasks: Array<TaskData & { depth: number }>;
-      }>(script);
+      const tasks = await executeAndParseJSON<TaskData[]>(script);
 
-      if (result.subtaskCount === 0) {
+      if (tasks.length === 0) {
         return {
-          content: [{ type: "text", text: `No subtasks found for task "${result.parentTask.name}".` }]
+          content: [{ type: "text", text: `No tasks planned within ${daysAhead} days.` }]
         };
       }
 
+      const output = {
+        count: tasks.length,
+        daysAhead,
+        tasks
+      };
+
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }]
       };
     } catch (error) {
       return {
         isError: true,
-        content: [{ type: "text", text: `Error getting subtasks: ${error instanceof Error ? error.message : String(error)}` }]
+        content: [{ type: "text", text: `Error getting planned tasks: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }
