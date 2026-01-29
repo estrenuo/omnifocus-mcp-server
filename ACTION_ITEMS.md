@@ -47,9 +47,36 @@ npm test       # ✅ All 199 tests pass
 - ✅ Blocks process/global access
 - ✅ Length validation (DoS prevention)
 
+### 3. Clean Up Old Test Files ✅ COMPLETE
+**Status:** ✅ RESOLVED
+**Priority:** P1
+**Completed:** 2026-01-29
+
+**Problem:** Old compiled test files in `dist/__tests__/` creating confusion.
+
+**Fix Applied:**
+```bash
+rm -rf dist/__tests__/mappers.test.*
+rm -rf dist/__tests__/schemas.test.*
+rm -rf dist/__tests__/script-executor.test.*
+npm run build  # ✅ Successful
+```
+
+**Verification:**
+- ✅ Old files removed (mappers.test, schemas.test, script-executor.test)
+- ✅ New sanitization.test.* files compiled
+- ✅ All 192 tests passing
+
+**Current dist/__tests__/ contents:**
+- integration.test.* ✅
+- sanitization.test.* ✅ (new)
+- tools.test.* ✅
+
 ---
 
 ## 🔴 Critical (Must Fix Before Merge)
+
+*No critical items remaining.*
 
 ---
 
@@ -77,29 +104,6 @@ Remove placeholder tests and add TODO comments:
 Implement actual tests for these 3 tools (see tools.test.ts lines 497-636).
 
 **Decision Required:** Choose Option A or B
-
----
-
-### 3. Clean Up Old Test Files
-**Priority:** P1
-**Effort:** 2 minutes
-
-**Problem:** Old compiled test files in `dist/__tests__/` creating confusion.
-
-**Fix:**
-```bash
-rm -rf dist/__tests__/mappers.test.js
-rm -rf dist/__tests__/schemas.test.js
-rm -rf dist/__tests__/script-executor.test.js
-npm run build
-```
-
-**Or add to `.gitignore`:**
-```
-dist/__tests__/**/*.js
-!dist/__tests__/tools.test.js
-!dist/__tests__/integration.test.js
-```
 
 ---
 
@@ -178,12 +182,14 @@ src/
    - Comprehensive security layer
    - 49 new tests
    - 18.23% coverage (up from 13.87%)
+3. ✅ Clean up old test files (2 min) - DONE
+   - Removed 3 old test file sets
+   - Clean dist/__tests__/ directory
 
 ### Must Fix Before Merge (10 minutes)
-3. ⏳ Address placeholder tests (10 min - Option A recommended)
+4. ⏳ Address placeholder tests (10 min - Option A recommended)
 
 ### Should Fix Before Merge (30 minutes)
-4. ⏳ Clean up old test files (2 min)
 5. ⏳ Update documentation (30 min)
 
 ### Can Fix After Merge
@@ -227,8 +233,8 @@ echo "✅ All critical fixes applied!"
 |----------|--------|-------|
 | Fix build errors | ✅ Complete | Fixed 2026-01-29 |
 | Add sanitization | ✅ Complete | Implemented with 49 tests |
+| Clean dist files | ✅ Complete | Cleaned 2026-01-29 |
 | Placeholder tests | ⏳ Pending | Choose Option A or B |
-| Clean dist files | ⏳ Pending | Simple cleanup |
 | Update docs | 📋 Optional | Can be separate PR |
 
 ---
@@ -237,6 +243,11 @@ echo "✅ All critical fixes applied!"
 **Review Status:** ✅ Approved - Critical items resolved, minor cleanup remaining
 
 ## Recent Updates
+
+**2026-01-29 - Test File Cleanup**
+- ✅ Removed old compiled test files from dist/__tests__/
+- ✅ Clean build with only current test files
+- ✅ All 192 tests passing
 
 **2026-01-29 - Security Implementation**
 - ✅ Implemented comprehensive input sanitization
@@ -248,5 +259,5 @@ echo "✅ All critical fixes applied!"
 
 **Next Steps:**
 1. Address placeholder tests (Option A or B)
-2. Clean up old dist files
+2. Update documentation (optional)
 3. Project ready for production
