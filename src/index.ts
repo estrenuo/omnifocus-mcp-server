@@ -19,7 +19,7 @@ const execAsync = promisify(exec);
 // Types
 // ============================================================================
 
-interface TaskData {
+export interface TaskData {
   id: string;
   name: string;
   note: string;
@@ -41,7 +41,7 @@ interface TaskData {
   childTaskCount: number;
 }
 
-interface ProjectData {
+export interface ProjectData {
   id: string;
   name: string;
   note: string;
@@ -55,7 +55,7 @@ interface ProjectData {
   sequential: boolean;
 }
 
-interface FolderData {
+export interface FolderData {
   id: string;
   name: string;
   status: string;
@@ -64,7 +64,7 @@ interface FolderData {
   parentName: string | null;
 }
 
-interface TagData {
+export interface TagData {
   id: string;
   name: string;
   status: string;
@@ -82,7 +82,7 @@ interface TagData {
  * Note: doc.evaluate() for Omni Automation doesn't work from JXA due to type
  * conversion issues (-1700). We use direct JXA property access instead.
  */
-async function executeOmniFocusScript(script: string): Promise<string> {
+export async function executeOmniFocusScript(script: string): Promise<string> {
   // Escape for JXA string literal (backticks)
   const escapedScript = script
     .replace(/\\/g, '\\\\')
@@ -136,7 +136,7 @@ async function executeOmniFocusScript(script: string): Promise<string> {
 /**
  * Executes a script and parses the JSON result
  */
-async function executeAndParseJSON<T>(script: string): Promise<T> {
+export async function executeAndParseJSON<T>(script: string): Promise<T> {
   const result = await executeOmniFocusScript(script);
   try {
     return JSON.parse(result) as T;
@@ -149,7 +149,7 @@ async function executeAndParseJSON<T>(script: string): Promise<T> {
 // Helper Scripts (JXA syntax - properties are accessed as methods)
 // ============================================================================
 
-const TASK_MAPPER = `
+export const TASK_MAPPER = `
 function mapTask(t) {
   var noteVal = t.note();
   var noteStr = noteVal ? String(noteVal) : "";
@@ -220,7 +220,7 @@ function mapTask(t) {
 }
 `;
 
-const PROJECT_MAPPER = `
+export const PROJECT_MAPPER = `
 function mapProject(p) {
   var noteVal = p.note();
   var noteStr = noteVal ? String(noteVal) : "";
@@ -248,7 +248,7 @@ function mapProject(p) {
 }
 `;
 
-const FOLDER_MAPPER = `
+export const FOLDER_MAPPER = `
 function mapFolder(f) {
   var parentName = null;
   try {
@@ -269,7 +269,7 @@ function mapFolder(f) {
 }
 `;
 
-const TAG_MAPPER = `
+export const TAG_MAPPER = `
 function mapTag(t) {
   return {
     id: t.id(),
@@ -746,7 +746,7 @@ Examples:
   - Daily recurring: { name: "Daily standup", dueDate: "2024-01-01T09:00:00", recurrence: { frequency: "daily", interval: 1 } }
   - Weekly on Mon/Wed/Fri: { name: "Workout", dueDate: "2024-01-01T07:00:00", recurrence: { frequency: "weekly", daysOfWeek: ["Monday", "Wednesday", "Friday"] } }
   - Monthly on 1st and 15th: { name: "Pay bills", dueDate: "2024-01-01T12:00:00", recurrence: { frequency: "monthly", interval: 1, dayOfMonth: 1 } }
-  - Repeat from completion: { name: "Review quarterly", recurrence: { frequency: "monthly", interval: 3, repeatFrom: "completion-date" } }`
+  - Repeat from completion: { name: "Review quarterly", recurrence: { frequency: "monthly", interval: 3, repeatFrom: "completion-date" } }
   - Task with planning: { name: "Write article", plannedDate: "2024-12-15T09:00:00", dueDate: "2024-12-31T17:00:00" }
   - Task with tags: { name: "Call John", tagNames: ["Calls", "Urgent"] }`,
     inputSchema: CreateTaskInputSchema,
@@ -758,7 +758,7 @@ Examples:
     }
   },
   async (params) => {
-    const { name, note, projectName, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, tagNames, recurrence } = params;
+    const { name, note, projectName, parentTaskId, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, tagNames, recurrence } = params;
     
     // Escape for JavaScript string
     const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
