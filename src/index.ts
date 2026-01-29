@@ -75,6 +75,100 @@ export interface TagData {
 }
 
 // ============================================================================
+// Input Sanitization - Security Layer
+// ============================================================================
+
+/**
+ * Sanitizes user input to prevent JXA injection attacks.
+ *
+ * Security measures:
+ * 1. Length validation to prevent DoS
+ * 2. Pattern detection for dangerous code constructs
+ * 3. Proper escaping of special characters
+ *
+ * @param input - The user-provided string to sanitize
+ * @param maxLength - Maximum allowed length (default: 500)
+ * @returns Sanitized and escaped string safe for JXA execution
+ * @throws Error if input is invalid or contains dangerous patterns
+ */
+export function sanitizeInput(input: string, maxLength: number = 500): string {
+  // 1. Type validation
+  if (typeof input !== 'string') {
+    throw new Error('Input must be a string');
+  }
+
+  // 2. Length validation (prevent DoS attacks)
+  if (input.length > maxLength) {
+    throw new Error(`Input exceeds maximum length of ${maxLength} characters`);
+  }
+
+  // 3. Check for potentially dangerous patterns that could lead to code injection
+  const dangerousPatterns: Array<{ pattern: RegExp; description: string }> = [
+    { pattern: /\$\{/, description: 'template literal injection' },
+    { pattern: /eval\s*\(/i, description: 'eval() function call' },
+    { pattern: /Function\s*\(/i, description: 'Function() constructor' },
+    { pattern: /require\s*\(/i, description: 'require() function call' },
+    { pattern: /import\s+/i, description: 'import statement' },
+    { pattern: /\.constructor/i, description: 'constructor access' },
+    { pattern: /__proto__/, description: 'prototype pollution' },
+    { pattern: /\bexec\s*\(/i, description: 'exec() function call' },
+    { pattern: /\bspawn\s*\(/i, description: 'spawn() function call' },
+    { pattern: /process\./i, description: 'process object access' },
+    { pattern: /global\./i, description: 'global object access' },
+  ];
+
+  for (const { pattern, description } of dangerousPatterns) {
+    if (pattern.test(input)) {
+      throw new Error(`Input contains potentially unsafe pattern: ${description}`);
+    }
+  }
+
+  // 4. Check for excessive control characters that could cause issues
+  const controlCharCount = (input.match(/[\x00-\x1F\x7F-\x9F]/g) || []).length;
+  if (controlCharCount > 10) {
+    throw new Error('Input contains excessive control characters');
+  }
+
+  // 5. Escape special characters for safe JXA string interpolation
+  // Order matters: backslash must be first!
+  return input
+    .replace(/\\/g, '\\\\')    // Backslash
+    .replace(/"/g, '\\"')       // Double quotes
+    .replace(/'/g, "\\'")       // Single quotes
+    .replace(/`/g, '\\`')       // Backticks
+    .replace(/\$/g, '\\$')      // Dollar signs
+    .replace(/\n/g, '\\n')      // Newlines
+    .replace(/\r/g, '\\r')      // Carriage returns
+    .replace(/\t/g, '\\t')      // Tabs
+    .replace(/\0/g, '\\0');     // Null bytes
+}
+
+/**
+ * Validates and sanitizes an array of strings.
+ *
+ * @param items - Array of strings to sanitize
+ * @param maxLength - Maximum allowed length per item
+ * @param maxItems - Maximum number of items allowed
+ * @returns Array of sanitized strings
+ * @throws Error if validation fails
+ */
+export function sanitizeArray(
+  items: string[],
+  maxLength: number = 500,
+  maxItems: number = 100
+): string[] {
+  if (!Array.isArray(items)) {
+    throw new Error('Input must be an array');
+  }
+
+  if (items.length > maxItems) {
+    throw new Error(`Array exceeds maximum length of ${maxItems} items`);
+  }
+
+  return items.map(item => sanitizeInput(item, maxLength));
+}
+
+// ============================================================================
 // OmniFocus Executor - JXA VERSION
 // ============================================================================
 
@@ -765,31 +859,32 @@ Examples:
   },
   async (params) => {
     const { name, note, projectName, parentTaskId, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, tagNames, recurrence } = params;
-    
-    // Escape for JavaScript string
-    const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
-    const escapeNote = note ? note.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") : "";
+
+    // Sanitize user inputs to prevent injection attacks
+    const safeName = sanitizeInput(name, 500);
+    const safeNote = note ? sanitizeInput(note, 10000) : "";
+    const safeProjectName = projectName ? sanitizeInput(projectName, 500) : null;
+    const safeParentTaskId = parentTaskId ? sanitizeInput(parentTaskId, 100) : null;
 
     let createScript: string;
-    if (parentTaskId) {
+    if (safeParentTaskId) {
       // Create as a subtask of an existing task
       createScript = `
-        var parentTask = doc.flattenedTasks().find(function(t) { return t.id() === "${parentTaskId}"; });
-        if (!parentTask) { throw new Error("Parent task not found with ID: ${parentTaskId}"); }
-        var task = app.Task({name: "${escapeName}"});
+        var parentTask = doc.flattenedTasks().find(function(t) { return t.id() === "${safeParentTaskId}"; });
+        if (!parentTask) { throw new Error("Parent task not found with ID: ${safeParentTaskId}"); }
+        var task = app.Task({name: "${safeName}"});
         parentTask.tasks.push(task);
       `;
-    } else if (projectName) {
-      const escapeProject = projectName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    } else if (safeProjectName) {
       createScript = `
-        var project = doc.flattenedProjects().find(function(p) { return p.name() === "${escapeProject}"; });
-        if (!project) { throw new Error("Project not found: ${escapeProject}"); }
-        var task = app.Task({name: "${escapeName}"});
+        var project = doc.flattenedProjects().find(function(p) { return p.name() === "${safeProjectName}"; });
+        if (!project) { throw new Error("Project not found: ${safeProjectName}"); }
+        var task = app.Task({name: "${safeName}"});
         project.tasks.push(task);
       `;
     } else {
       createScript = `
-        var task = app.InboxTask({name: "${escapeName}"});
+        var task = app.InboxTask({name: "${safeName}"});
         doc.inboxTasks.push(task);
       `;
     }
@@ -840,17 +935,22 @@ Examples:
       }
     }
 
+    // Sanitize tag names if provided
+    const safeTagNames = tagNames && tagNames.length > 0
+      ? sanitizeArray(tagNames, 200, 50)
+      : [];
+
     const script = `
       ${TASK_MAPPER}
       ${createScript}
-      ${note ? `task.note = "${escapeNote}";` : ""}
+      ${note ? `task.note = "${safeNote}";` : ""}
       ${dueDate ? `task.dueDate = new Date("${dueDate}");` : ""}
       ${deferDate ? `task.deferDate = new Date("${deferDate}");` : ""}
       ${plannedDate ? `try { task.plannedDate = new Date("${plannedDate}"); } catch(e) {}` : ""}
       ${flagged ? `task.flagged = true;` : ""}
       ${estimatedMinutes ? `task.estimatedMinutes = ${estimatedMinutes};` : ""}
-      ${tagNames && tagNames.length > 0 ? `
-        var tagNamesToAdd = ${JSON.stringify(tagNames)};
+      ${safeTagNames.length > 0 ? `
+        var tagNamesToAdd = ${JSON.stringify(safeTagNames)};
         var allTags = doc.flattenedTags();
         tagNamesToAdd.forEach(function(tagName) {
           var tag = allTags.find(function(t) { return t.name() === tagName; });
@@ -929,41 +1029,44 @@ Examples:
   async (params) => {
     const { taskId, taskName, action } = params;
 
+    // Sanitize user inputs
+    const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
+    const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
+
     const actionCode = action === "drop"
       ? "task.markDropped();"
       : "task.markComplete();";
 
     let findTaskScript: string;
-    if (taskId) {
+    if (safeTaskId) {
       // Use ID if provided (takes priority)
       findTaskScript = `
-        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
-        if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${safeTaskId}"; });
+        if (!task) { throw new Error("Task not found with ID: ${safeTaskId}"); }
       `;
-    } else if (taskName) {
+    } else if (safeTaskName) {
       // Search by name
-      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       findTaskScript = `
         var allTasks = doc.flattenedTasks();
 
         // Try exact match first
-        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+        var task = allTasks.find(function(t) { return t.name() === "${safeTaskName}"; });
 
         // If no exact match, try case-insensitive partial match
         if (!task) {
-          var searchLower = "${escapedName.toLowerCase()}";
+          var searchLower = "${safeTaskName.toLowerCase()}";
           var matches = allTasks.filter(function(t) {
             return t.name().toLowerCase().indexOf(searchLower) !== -1;
           });
 
           if (matches.length === 0) {
-            throw new Error("No task found matching name: ${escapedName}");
+            throw new Error("No task found matching name: ${safeTaskName}");
           } else if (matches.length > 1) {
             var matchList = matches.map(function(t) {
               var proj = t.containingProject();
               return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
             }).join("\\n");
-            throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
+            throw new Error("Multiple tasks found matching '${safeTaskName}'. Please use taskId or be more specific:\\n" + matchList);
           }
           task = matches[0];
         }
@@ -1048,39 +1151,42 @@ Examples:
   },
   async (params) => {
     const { taskId, taskName, tagName } = params;
-    const escapeTagName = tagName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+    // Sanitize user inputs
+    const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
+    const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
+    const safeTagName = sanitizeInput(tagName, 200);
 
     let findTaskScript: string;
-    if (taskId) {
+    if (safeTaskId) {
       // Use ID if provided (takes priority)
       findTaskScript = `
-        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
-        if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${safeTaskId}"; });
+        if (!task) { throw new Error("Task not found with ID: ${safeTaskId}"); }
       `;
-    } else if (taskName) {
+    } else if (safeTaskName) {
       // Search by name
-      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       findTaskScript = `
         var allTasks = doc.flattenedTasks();
 
         // Try exact match first
-        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+        var task = allTasks.find(function(t) { return t.name() === "${safeTaskName}"; });
 
         // If no exact match, try case-insensitive partial match
         if (!task) {
-          var searchLower = "${escapedName.toLowerCase()}";
+          var searchLower = "${safeTaskName.toLowerCase()}";
           var matches = allTasks.filter(function(t) {
             return t.name().toLowerCase().indexOf(searchLower) !== -1;
           });
 
           if (matches.length === 0) {
-            throw new Error("No task found matching name: ${escapedName}");
+            throw new Error("No task found matching name: ${safeTaskName}");
           } else if (matches.length > 1) {
             var matchList = matches.map(function(t) {
               var proj = t.containingProject();
               return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
             }).join("\\n");
-            throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
+            throw new Error("Multiple tasks found matching '${safeTaskName}'. Please use taskId or be more specific:\\n" + matchList);
           }
           task = matches[0];
         }
@@ -1096,11 +1202,11 @@ Examples:
       ${TASK_MAPPER}
       ${findTaskScript}
 
-      var tag = doc.flattenedTags().find(function(t) { return t.name() === "${escapeTagName}"; });
-      if (!tag) { throw new Error("Tag not found: ${escapeTagName}"); }
+      var tag = doc.flattenedTags().find(function(t) { return t.name() === "${safeTagName}"; });
+      if (!tag) { throw new Error("Tag not found: ${safeTagName}"); }
 
       // Check if tag is already on task
-      var existingTag = task.tags().find(function(t) { return t.name() === "${escapeTagName}"; });
+      var existingTag = task.tags().find(function(t) { return t.name() === "${safeTagName}"; });
       if (!existingTag) {
         app.add(tag, { to: task.tags });
       }
@@ -1173,39 +1279,42 @@ Examples:
   },
   async (params) => {
     const { taskId, taskName, tagName } = params;
-    const escapeTagName = tagName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+    // Sanitize user inputs
+    const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
+    const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
+    const safeTagName = sanitizeInput(tagName, 200);
 
     let findTaskScript: string;
-    if (taskId) {
+    if (safeTaskId) {
       // Use ID if provided (takes priority)
       findTaskScript = `
-        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${taskId}"; });
-        if (!task) { throw new Error("Task not found with ID: ${taskId}"); }
+        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${safeTaskId}"; });
+        if (!task) { throw new Error("Task not found with ID: ${safeTaskId}"); }
       `;
-    } else if (taskName) {
+    } else if (safeTaskName) {
       // Search by name
-      const escapedName = taskName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       findTaskScript = `
         var allTasks = doc.flattenedTasks();
 
         // Try exact match first
-        var task = allTasks.find(function(t) { return t.name() === "${escapedName}"; });
+        var task = allTasks.find(function(t) { return t.name() === "${safeTaskName}"; });
 
         // If no exact match, try case-insensitive partial match
         if (!task) {
-          var searchLower = "${escapedName.toLowerCase()}";
+          var searchLower = "${safeTaskName.toLowerCase()}";
           var matches = allTasks.filter(function(t) {
             return t.name().toLowerCase().indexOf(searchLower) !== -1;
           });
 
           if (matches.length === 0) {
-            throw new Error("No task found matching name: ${escapedName}");
+            throw new Error("No task found matching name: ${safeTaskName}");
           } else if (matches.length > 1) {
             var matchList = matches.map(function(t) {
               var proj = t.containingProject();
               return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
             }).join("\\n");
-            throw new Error("Multiple tasks found matching '${escapedName}'. Please use taskId or be more specific:\\n" + matchList);
+            throw new Error("Multiple tasks found matching '${safeTaskName}'. Please use taskId or be more specific:\\n" + matchList);
           }
           task = matches[0];
         }
@@ -1221,7 +1330,7 @@ Examples:
       ${TASK_MAPPER}
       ${findTaskScript}
 
-      var tagOnTask = task.tags().find(function(t) { return t.name() === "${escapeTagName}"; });
+      var tagOnTask = task.tags().find(function(t) { return t.name() === "${safeTagName}"; });
       if (tagOnTask) {
         app.remove(tagOnTask, { from: task.tags });
       }
@@ -1296,15 +1405,17 @@ Examples:
   },
   async (params) => {
     const { query, searchType, limit } = params;
-    const escapeQuery = query.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-    
+
+    // Sanitize search query
+    const safeQuery = sanitizeInput(query, 200);
+
     const results: Record<string, unknown[]> = {};
-    
+
     try {
       if (searchType === "tasks" || searchType === "all") {
         const taskScript = `
           ${TASK_MAPPER}
-          var q = "${escapeQuery}".toLowerCase();
+          var q = "${safeQuery}".toLowerCase();
           var matched = doc.flattenedTasks().filter(function(t) {
             var name = t.name().toLowerCase();
             var note = t.note();
@@ -1319,7 +1430,7 @@ Examples:
       if (searchType === "projects" || searchType === "all") {
         const projectScript = `
           ${PROJECT_MAPPER}
-          var q = "${escapeQuery}".toLowerCase();
+          var q = "${safeQuery}".toLowerCase();
           var matched = doc.flattenedProjects().filter(function(p) {
             return p.name().toLowerCase().indexOf(q) !== -1;
           }).slice(0, ${limit});
@@ -1331,7 +1442,7 @@ Examples:
       if (searchType === "folders" || searchType === "all") {
         const folderScript = `
           ${FOLDER_MAPPER}
-          var q = "${escapeQuery}".toLowerCase();
+          var q = "${safeQuery}".toLowerCase();
           var matched = doc.flattenedFolders().filter(function(f) {
             return f.name().toLowerCase().indexOf(q) !== -1;
           }).slice(0, ${limit});
@@ -1343,7 +1454,7 @@ Examples:
       if (searchType === "tags" || searchType === "all") {
         const tagScript = `
           ${TAG_MAPPER}
-          var q = "${escapeQuery}".toLowerCase();
+          var q = "${safeQuery}".toLowerCase();
           var matched = doc.flattenedTags().filter(function(t) {
             return t.name().toLowerCase().indexOf(q) !== -1;
           }).slice(0, ${limit});
@@ -1834,36 +1945,38 @@ Examples:
   async (params) => {
     const { projectId, projectName, reviewIntervalDays } = params;
 
+    // Sanitize user inputs
+    const safeProjectId = projectId ? sanitizeInput(projectId, 100) : null;
+    const safeProjectName = projectName ? sanitizeInput(projectName, 500) : null;
+
     let findProjectScript: string;
-    if (projectId) {
-      const escapedId = projectId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    if (safeProjectId) {
       findProjectScript = `
-        var project = doc.flattenedProjects().find(function(p) { return p.id() === "${escapedId}"; });
-        if (!project) { throw new Error("Project not found with ID: ${escapedId}"); }
+        var project = doc.flattenedProjects().find(function(p) { return p.id() === "${safeProjectId}"; });
+        if (!project) { throw new Error("Project not found with ID: ${safeProjectId}"); }
       `;
-    } else if (projectName) {
-      const escapedName = projectName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    } else if (safeProjectName) {
       findProjectScript = `
         var allProjects = doc.flattenedProjects();
 
         // Try exact match first
-        var project = allProjects.find(function(p) { return p.name() === "${escapedName}"; });
+        var project = allProjects.find(function(p) { return p.name() === "${safeProjectName}"; });
 
         // If no exact match, try case-insensitive partial match
         if (!project) {
-          var searchLower = "${escapedName.toLowerCase()}";
+          var searchLower = "${safeProjectName.toLowerCase()}";
           var matches = allProjects.filter(function(p) {
             return p.name().toLowerCase().indexOf(searchLower) !== -1;
           });
 
           if (matches.length === 0) {
-            throw new Error("No project found matching name: ${escapedName}");
+            throw new Error("No project found matching name: ${safeProjectName}");
           } else if (matches.length > 1) {
             var matchList = matches.map(function(p) {
               var folder = p.folder();
               return "- " + p.name() + " (ID: " + p.id() + (folder ? ", Folder: " + folder.name() : "") + ")";
             }).join("\\n");
-            throw new Error("Multiple projects found matching '${escapedName}'. Please use projectId or be more specific:\\n" + matchList);
+            throw new Error("Multiple projects found matching '${safeProjectName}'. Please use projectId or be more specific:\\n" + matchList);
           }
           project = matches[0];
         }
@@ -1959,7 +2072,9 @@ Examples:
   async (params) => {
     const { projectIds, reviewIntervalDays } = params;
 
-    const projectIdsJson = JSON.stringify(projectIds);
+    // Sanitize project IDs array
+    const safeProjectIds = sanitizeArray(projectIds, 100, 100);
+    const projectIdsJson = JSON.stringify(safeProjectIds);
 
     let reviewScript: string;
     if (reviewIntervalDays) {
@@ -1982,9 +2097,8 @@ Examples:
 
       targetIds.forEach(function(projectId) {
         try {
-          // Escape the projectId to prevent potential injection
-          var escapedId = projectId.replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
-          var project = allProjects.find(function(p) { return p.id() === escapedId; });
+          // Find project by ID (already sanitized on input)
+          var project = allProjects.find(function(p) { return p.id() === projectId; });
           if (!project) {
             results.failed.push({
               projectId: projectId,
