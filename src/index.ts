@@ -764,7 +764,7 @@ Examples:
     }
   },
   async (params) => {
-    const { name, note, projectName, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, tagNames, recurrence } = params;
+    const { name, note, projectName, parentTaskId, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, tagNames, recurrence } = params;
     
     // Escape for JavaScript string
     const escapeName = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
@@ -1982,7 +1982,9 @@ Examples:
 
       targetIds.forEach(function(projectId) {
         try {
-          var project = allProjects.find(function(p) { return p.id() === projectId; });
+          // Escape the projectId to prevent potential injection
+          var escapedId = projectId.replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
+          var project = allProjects.find(function(p) { return p.id() === escapedId; });
           if (!project) {
             results.failed.push({
               projectId: projectId,
