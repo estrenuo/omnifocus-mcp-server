@@ -1836,9 +1836,10 @@ Examples:
 
     let findProjectScript: string;
     if (projectId) {
+      const escapedId = projectId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       findProjectScript = `
-        var project = doc.flattenedProjects().find(function(p) { return p.id() === "${projectId}"; });
-        if (!project) { throw new Error("Project not found with ID: ${projectId}"); }
+        var project = doc.flattenedProjects().find(function(p) { return p.id() === "${escapedId}"; });
+        if (!project) { throw new Error("Project not found with ID: ${escapedId}"); }
       `;
     } else if (projectName) {
       const escapedName = projectName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
