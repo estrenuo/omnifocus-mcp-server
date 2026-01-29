@@ -53,6 +53,8 @@ interface ProjectData {
   folderName: string | null;
   taskCount: number;
   sequential: boolean;
+  nextReviewDate: string | null;
+  reviewInterval: number | null;
 }
 
 interface FolderData {
@@ -211,7 +213,7 @@ function mapTask(t) {
     projectName: containingProj ? containingProj.name() : null,
     inInbox: t.inInbox(),
     repetitionRule: repetitionRule,
-    repetitionMethod: repetitionMethod
+    repetitionMethod: repetitionMethod,
     parentTaskId: parentTaskId,
     parentTaskName: parentTaskName,
     hasChildren: childTaskCount > 0,
@@ -232,6 +234,21 @@ function mapProject(p) {
   var deferDate = p.deferDate();
   var folder = p.folder();
 
+  // Review properties
+  var nextReviewDate = null;
+  var reviewInterval = null;
+  try {
+    var nrd = p.nextReviewDate();
+    if (nrd) {
+      nextReviewDate = nrd.toISOString();
+    }
+    // Review interval is in seconds, convert to days for easier use
+    var ri = p.reviewInterval();
+    if (ri) {
+      reviewInterval = Math.round(ri / 86400); // 86400 seconds in a day
+    }
+  } catch(e) {}
+
   return {
     id: p.id(),
     name: p.name(),
@@ -243,7 +260,9 @@ function mapProject(p) {
     deferDate: deferDate ? deferDate.toISOString() : null,
     folderName: folder ? folder.name() : null,
     taskCount: p.flattenedTasks().length,
-    sequential: p.sequential()
+    sequential: p.sequential(),
+    nextReviewDate: nextReviewDate,
+    reviewInterval: reviewInterval
   };
 }
 `;
@@ -1651,6 +1670,324 @@ Examples:
       return {
         isError: true,
         content: [{ type: "text", text: `Error getting planned tasks: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Get Projects for Review
+// ============================================================================
+
+const GetProjectsForReviewInputSchema = z.object({
+  includeCompleted: z.boolean()
+    .default(false)
+    .describe("Include completed projects in results"),
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(50)
+    .describe("Maximum number of projects to return")
+}).strict();
+
+server.registerTool(
+  "omnifocus_get_projects_for_review",
+  {
+    title: "Get Projects for Review",
+    description: `Get projects that need review based on their next review date.
+
+Returns projects whose nextReviewDate is in the past or today, sorted by nextReviewDate (oldest first).
+
+Args:
+  - includeCompleted (boolean): Include completed projects (default: false)
+  - limit (number): Maximum projects to return, 1-500 (default: 50)
+
+Returns:
+  Array of project objects with review dates
+
+Examples:
+  - Get projects needing review: {}
+  - Include completed: { includeCompleted: true }`,
+    inputSchema: GetProjectsForReviewInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { includeCompleted, limit } = params;
+
+    const script = `
+      ${PROJECT_MAPPER}
+      var now = new Date();
+      var projects = doc.flattenedProjects().filter(function(p) {
+        ${!includeCompleted ? 'if (p.completed()) return false;' : ''}
+        var nextReview = p.nextReviewDate();
+        if (!nextReview) return false;
+        return nextReview <= now;
+      }).sort(function(a, b) {
+        var aReview = a.nextReviewDate();
+        var bReview = b.nextReviewDate();
+        if (!aReview || !bReview) return 0;
+        return aReview - bReview;
+      }).slice(0, ${limit});
+      JSON.stringify(projects.map(mapProject));
+    `;
+
+    try {
+      const projects = await executeAndParseJSON<ProjectData[]>(script);
+
+      if (projects.length === 0) {
+        return {
+          content: [{ type: "text", text: "No projects need review at this time." }]
+        };
+      }
+
+      const output = {
+        count: projects.length,
+        projects: projects
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error getting projects for review: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Mark Project as Reviewed
+// ============================================================================
+
+const MarkProjectReviewedInputSchema = z.object({
+  projectId: z.string()
+    .optional()
+    .describe("The project ID to mark as reviewed. Takes priority if both projectId and projectName are provided."),
+  projectName: z.string()
+    .optional()
+    .describe("The project name to search for. Used if projectId is not provided."),
+  reviewIntervalDays: z.number()
+    .int()
+    .min(1)
+    .max(3650)
+    .optional()
+    .describe("Optional: Set a new review interval in days (1-3650)")
+}).strict().refine(
+  (data) => data.projectId || data.projectName,
+  { message: "Either projectId or projectName must be provided" }
+);
+
+server.registerTool(
+  "omnifocus_mark_project_reviewed",
+  {
+    title: "Mark Project as Reviewed",
+    description: `Mark a project as reviewed, updating its next review date.
+
+Uses the project's markReviewed() method to update the nextReviewDate based on the project's review interval.
+
+Args:
+  - projectId (string, optional): The project's ID. Takes priority if both provided.
+  - projectName (string, optional): The project's name to search for. At least one is required.
+  - reviewIntervalDays (number, optional): Set new review interval in days (1-3650)
+
+Returns:
+  The updated project object
+
+Examples:
+  - Mark by ID: { projectId: "abc123" }
+  - Mark by name: { projectName: "My Project" }
+  - Mark with new interval: { projectName: "Weekly Review", reviewIntervalDays: 7 }`,
+    inputSchema: MarkProjectReviewedInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { projectId, projectName, reviewIntervalDays } = params;
+
+    let findProjectScript: string;
+    if (projectId) {
+      findProjectScript = `
+        var project = doc.flattenedProjects().find(function(p) { return p.id() === "${projectId}"; });
+        if (!project) { throw new Error("Project not found with ID: ${projectId}"); }
+      `;
+    } else if (projectName) {
+      const escapedName = projectName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      findProjectScript = `
+        var allProjects = doc.flattenedProjects();
+
+        // Try exact match first
+        var project = allProjects.find(function(p) { return p.name() === "${escapedName}"; });
+
+        // If no exact match, try case-insensitive partial match
+        if (!project) {
+          var searchLower = "${escapedName.toLowerCase()}";
+          var matches = allProjects.filter(function(p) {
+            return p.name().toLowerCase().indexOf(searchLower) !== -1;
+          });
+
+          if (matches.length === 0) {
+            throw new Error("No project found matching name: ${escapedName}");
+          } else if (matches.length > 1) {
+            var matchList = matches.map(function(p) {
+              var folder = p.folder();
+              return "- " + p.name() + " (ID: " + p.id() + (folder ? ", Folder: " + folder.name() : "") + ")";
+            }).join("\\n");
+            throw new Error("Multiple projects found matching '${escapedName}'. Please use projectId or be more specific:\\n" + matchList);
+          }
+          project = matches[0];
+        }
+      `;
+    } else {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either projectId or projectName must be provided" }]
+      };
+    }
+
+    const reviewIntervalScript = reviewIntervalDays
+      ? `project.reviewInterval = ${reviewIntervalDays * 86400};` // Convert days to seconds
+      : "";
+
+    const script = `
+      ${PROJECT_MAPPER}
+      ${findProjectScript}
+      ${reviewIntervalScript}
+      project.markReviewed();
+      JSON.stringify(mapProject(project));
+    `;
+
+    try {
+      const project = await executeAndParseJSON<ProjectData>(script);
+
+      return {
+        content: [{
+          type: "text",
+          text: `Project marked as reviewed:\n${JSON.stringify(project, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error marking project as reviewed: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Batch Mark Projects as Reviewed
+// ============================================================================
+
+const BatchMarkReviewedInputSchema = z.object({
+  projectIds: z.array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Array of project IDs to mark as reviewed (max 100)"),
+  reviewIntervalDays: z.number()
+    .int()
+    .min(1)
+    .max(3650)
+    .optional()
+    .describe("Optional: Set a new review interval in days for all projects (1-3650)")
+}).strict();
+
+server.registerTool(
+  "omnifocus_batch_mark_reviewed",
+  {
+    title: "Batch Mark Projects as Reviewed",
+    description: `Mark multiple projects as reviewed in a single operation.
+
+Efficiently marks multiple projects as reviewed, optionally setting a new review interval for all.
+
+Args:
+  - projectIds (array): Array of project IDs to mark as reviewed (1-100 projects)
+  - reviewIntervalDays (number, optional): Set new review interval in days for all projects (1-3650)
+
+Returns:
+  Summary with success/error counts and details
+
+Examples:
+  - Mark multiple: { projectIds: ["id1", "id2", "id3"] }
+  - Mark with new interval: { projectIds: ["id1", "id2"], reviewIntervalDays: 14 }`,
+    inputSchema: BatchMarkReviewedInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { projectIds, reviewIntervalDays } = params;
+
+    const reviewIntervalScript = reviewIntervalDays
+      ? `project.reviewInterval = ${reviewIntervalDays * 86400};` // Convert days to seconds
+      : "";
+
+    const script = `
+      ${PROJECT_MAPPER}
+      var projectIds = ${JSON.stringify(projectIds)};
+      var allProjects = doc.flattenedProjects();
+      var results = {
+        total: projectIds.length,
+        successful: 0,
+        failed: 0,
+        errors: [],
+        updated: []
+      };
+
+      projectIds.forEach(function(id) {
+        try {
+          var project = allProjects.find(function(p) { return p.id() === id; });
+          if (!project) {
+            results.failed++;
+            results.errors.push({ projectId: id, error: "Project not found" });
+            return;
+          }
+          ${reviewIntervalScript}
+          project.markReviewed();
+          results.successful++;
+          results.updated.push(mapProject(project));
+        } catch(e) {
+          results.failed++;
+          results.errors.push({ projectId: id, error: String(e) });
+        }
+      });
+
+      JSON.stringify(results);
+    `;
+
+    try {
+      const results = await executeAndParseJSON<{
+        total: number;
+        successful: number;
+        failed: number;
+        errors: Array<{ projectId: string; error: string }>;
+        updated: ProjectData[];
+      }>(script);
+
+      return {
+        content: [{
+          type: "text",
+          text: `Batch review complete:\n${JSON.stringify(results, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error in batch mark reviewed: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }
