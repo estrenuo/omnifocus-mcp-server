@@ -308,6 +308,7 @@ describe('OmniFocus MCP Tools', () => {
           folderName: 'Work',
           taskCount: 15,
           sequential: false,
+          nextReviewDate: null,
         },
         {
           id: 'proj-2',
@@ -321,6 +322,7 @@ describe('OmniFocus MCP Tools', () => {
           folderName: 'Personal',
           taskCount: 8,
           sequential: true,
+          nextReviewDate: null,
         },
       ];
 
@@ -348,6 +350,7 @@ describe('OmniFocus MCP Tools', () => {
           folderName: 'Work',
           taskCount: 5,
           sequential: false,
+          nextReviewDate: null,
         },
       ];
 
@@ -385,6 +388,7 @@ describe('OmniFocus MCP Tools', () => {
             folderName: null,
             taskCount: 3,
             sequential: false,
+            nextReviewDate: null,
           },
         ],
         folders: [],
