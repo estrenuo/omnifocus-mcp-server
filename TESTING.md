@@ -23,12 +23,10 @@ npm run test:coverage
 
 ## Test Suite Overview
 
-The project includes **114 unit tests** covering:
+The project includes **96 unit tests** covering:
 
-- **Script Execution** (8 tests): JXA script execution, error handling, special character escaping
-- **Data Mappers** (17 tests): Task, Project, Folder, and Tag mapping functions
-- **Tool Handlers** (58 tests): All MCP tool endpoints and their functionality
-- **Schema Validation** (31 tests): Zod input schema validation and constraints
+- **Tool Handlers** (47 tests): All MCP tool endpoints including task, project, tag, folder, and search operations plus project review tools
+- **Input Sanitization** (49 tests): Security-focused input validation, injection prevention, array sanitization, and edge cases
 
 Additionally, **12 integration tests** are available but skipped by default (they require a running OmniFocus instance).
 
@@ -37,11 +35,9 @@ Additionally, **12 integration tests** are available but skipped by default (the
 ```
 src/__tests__/
 ├── README.md              # Detailed testing documentation
-├── script-executor.test.ts # JXA execution layer tests
-├── mappers.test.ts        # Data transformation tests
-├── tools.test.ts          # MCP tool handler tests
-├── schemas.test.ts        # Input validation tests
-└── integration.test.ts    # End-to-end tests (skipped by default)
+├── tools.test.ts          # MCP tool handler tests (47 tests)
+├── sanitization.test.ts   # Input sanitization & security tests (49 tests)
+└── integration.test.ts    # End-to-end tests (12 tests, skipped by default)
 ```
 
 ## Testing Philosophy
@@ -85,10 +81,10 @@ Coverage reports are generated in the `coverage/` directory.
 
 ```bash
 # Run tests matching a pattern
-npx vitest run script-executor
+npx vitest run sanitization
 
 # Run tests in a specific file
-npx vitest run src/__tests__/schemas.test.ts
+npx vitest run src/__tests__/tools.test.ts
 
 # Run a single test by name
 npx vitest run -t "should create task in inbox"
@@ -115,17 +111,17 @@ npm run test:watch
 
 When adding a new MCP tool or feature:
 
-1. **Create schema tests** in `schemas.test.ts`:
-   - Test valid inputs
-   - Test invalid inputs
-   - Test default values
-   - Test edge cases
-
-2. **Create handler tests** in `tools.test.ts`:
+1. **Create handler tests** in `tools.test.ts`:
    - Test successful execution
    - Test error cases
    - Test data transformation
    - Test business logic
+
+2. **Create sanitization tests** in `sanitization.test.ts`:
+   - Test input escaping and validation
+   - Test injection prevention
+   - Test array sanitization
+   - Test security edge cases
 
 3. **Update integration tests** in `integration.test.ts`:
    - Add end-to-end scenarios
