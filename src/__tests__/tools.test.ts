@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as index from '../index.js';
-import type { TaskData, ProjectData, FolderData, TagData } from '../index.js';
+import type { TaskData, ProjectData, FolderData, TagData, PerspectiveData } from '../index.js';
 
 // Mock the execute functions
 vi.mock('../index.js', async () => {
@@ -853,6 +853,48 @@ describe('OmniFocus MCP Tools', () => {
       await expect(
         index.executeAndParseJSON<ProjectData>('test script')
       ).rejects.toThrow('Either projectId or projectName must be provided');
+    });
+  });
+
+  describe('Perspective Listing', () => {
+    it('should list perspectives successfully', async () => {
+      const mockPerspectives: PerspectiveData[] = [
+        { id: 'persp-1', name: 'Inbox' },
+        { id: 'persp-2', name: 'Forecast' },
+        { id: 'persp-3', name: 'My Custom View' },
+      ];
+
+      vi.mocked(index.executeAndParseJSON).mockResolvedValue(mockPerspectives);
+
+      const result = await index.executeAndParseJSON<PerspectiveData[]>('test script');
+
+      expect(result).toHaveLength(3);
+      expect(result[0].name).toBe('Inbox');
+      expect(result[1].name).toBe('Forecast');
+      expect(result[2].name).toBe('My Custom View');
+    });
+
+    it('should return empty message when no perspectives found', async () => {
+      vi.mocked(index.executeAndParseJSON).mockResolvedValue([]);
+
+      const result = await index.executeAndParseJSON<PerspectiveData[]>('test script');
+
+      expect(result).toEqual([]);
+      expect(result).toHaveLength(0);
+    });
+
+    it('should respect limit parameter', async () => {
+      const mockPerspectives: PerspectiveData[] = [
+        { id: 'persp-1', name: 'Perspective 1' },
+        { id: 'persp-2', name: 'Perspective 2' },
+      ];
+
+      vi.mocked(index.executeAndParseJSON).mockResolvedValue(mockPerspectives);
+
+      const result = await index.executeAndParseJSON<PerspectiveData[]>('test script');
+
+      expect(result).toHaveLength(2);
+      expect(result.length).toBeLessThanOrEqual(2);
     });
   });
 

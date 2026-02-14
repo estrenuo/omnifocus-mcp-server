@@ -74,6 +74,11 @@ export interface TagData {
   parentName: string | null;
 }
 
+export interface PerspectiveData {
+  id: string;
+  name: string;
+}
+
 // ============================================================================
 // Input Sanitization - Security Layer
 // ============================================================================
@@ -378,6 +383,15 @@ function mapTag(t) {
     taskCount: t.tasks().length,
     allowsNextAction: t.allowsNextAction(),
     parentName: null
+  };
+}
+`;
+
+export const PERSPECTIVE_MAPPER = `
+function mapPerspective(p) {
+  return {
+    id: p.id(),
+    name: p.name()
   };
 }
 `;
@@ -2155,6 +2169,79 @@ Examples:
       return {
         isError: true,
         content: [{ type: "text", text: `Error in batch mark reviewed: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: List Perspectives
+// ============================================================================
+
+const ListPerspectivesInputSchema = z.object({
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(200)
+    .default(50)
+    .describe("Maximum number of perspectives to return")
+}).strict();
+
+server.registerTool(
+  "omnifocus_list_perspectives",
+  {
+    title: "List Perspectives",
+    description: `List perspectives in OmniFocus.
+
+Perspectives are saved views/filters that show specific subsets of tasks. Includes both built-in and custom perspectives.
+
+Args:
+  - limit (number): Maximum perspectives to return, 1-200 (default: 50)
+
+Returns:
+  Array of perspective objects with: id, name
+
+Examples:
+  - List perspectives: {}
+  - Limit results: { limit: 10 }`,
+    inputSchema: ListPerspectivesInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { limit } = params;
+
+    const script = `
+      ${PERSPECTIVE_MAPPER}
+      var perspectives = doc.perspectives().slice(0, ${limit});
+      JSON.stringify(perspectives.map(mapPerspective));
+    `;
+
+    try {
+      const perspectives = await executeAndParseJSON<PerspectiveData[]>(script);
+
+      if (perspectives.length === 0) {
+        return {
+          content: [{ type: "text", text: "No perspectives found." }]
+        };
+      }
+
+      const output = {
+        count: perspectives.length,
+        perspectives: perspectives
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error listing perspectives: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }
