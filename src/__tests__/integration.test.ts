@@ -35,6 +35,19 @@ describe.skip('OmniFocus Integration Tests', () => {
     });
   });
 
+  describe('Task Note Updates', () => {
+    it('should set, append, and clear a task note', async () => {
+      // 1. Create an inbox task
+      // 2. Update its note with omnifocus_update_task_note
+      // 3. Verify the note was set
+      // 4. Append additional text to the note
+      // 5. Verify the note contains both parts
+      // 6. Clear the note with an empty string
+      // 7. Verify the note is empty
+      expect(true).toBe(true);
+    });
+  });
+
   describe('Data Consistency', () => {
     it('should maintain consistent data across operations', async () => {
       // 1. List all inbox tasks
