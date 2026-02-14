@@ -856,6 +856,56 @@ describe('OmniFocus MCP Tools', () => {
     });
   });
 
+  describe('Perspective Tasks', () => {
+    it('should get tasks from a perspective', async () => {
+      const mockTasks: TaskData[] = [
+        createMockTask({ id: 'task-1', name: 'Task from perspective', inInbox: false, projectName: 'Work' }),
+        createMockTask({ id: 'task-2', name: 'Another task', inInbox: false, flagged: true }),
+      ];
+
+      vi.mocked(index.executeAndParseJSON).mockResolvedValue(mockTasks);
+
+      const result = await index.executeAndParseJSON<TaskData[]>('test script');
+
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toBe('Task from perspective');
+      expect(result[1].flagged).toBe(true);
+    });
+
+    it('should return empty message when perspective has no tasks', async () => {
+      vi.mocked(index.executeAndParseJSON).mockResolvedValue([]);
+
+      const result = await index.executeAndParseJSON<TaskData[]>('test script');
+
+      expect(result).toEqual([]);
+      expect(result).toHaveLength(0);
+    });
+
+    it('should handle perspective not found error', async () => {
+      vi.mocked(index.executeAndParseJSON).mockRejectedValue(
+        new Error('Perspective not found: NonexistentView')
+      );
+
+      await expect(
+        index.executeAndParseJSON('test script')
+      ).rejects.toThrow('Perspective not found');
+    });
+
+    it('should respect limit parameter', async () => {
+      const mockTasks: TaskData[] = [
+        createMockTask({ id: 'task-1', name: 'Task 1' }),
+        createMockTask({ id: 'task-2', name: 'Task 2' }),
+      ];
+
+      vi.mocked(index.executeAndParseJSON).mockResolvedValue(mockTasks);
+
+      const result = await index.executeAndParseJSON<TaskData[]>('test script');
+
+      expect(result).toHaveLength(2);
+      expect(result.length).toBeLessThanOrEqual(2);
+    });
+  });
+
   describe('Perspective Listing', () => {
     it('should list perspectives successfully', async () => {
       const mockPerspectives: PerspectiveData[] = [

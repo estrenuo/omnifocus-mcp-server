@@ -25,6 +25,7 @@ This MCP server provides access to OmniFocus functionality:
 - **List folders** - View folder hierarchy
 - **List tags** - View all tags
 - **List perspectives** - View built-in and custom perspectives
+- **Get perspective tasks** - List tasks shown in a specific perspective
 
 ### Search
 - **Universal search** - Search across tasks, projects, folders, and tags
@@ -129,6 +130,15 @@ List all tags.
 List perspectives (built-in and custom).
 ```json
 {
+  "limit": 50
+}
+```
+
+### omnifocus_get_perspective_tasks
+Get tasks shown in a specific perspective.
+```json
+{
+  "perspectiveName": "Next",
   "limit": 50
 }
 ```

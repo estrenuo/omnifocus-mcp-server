@@ -2252,6 +2252,112 @@ Examples:
 );
 
 // ============================================================================
+// Tool: Get Perspective Tasks
+// ============================================================================
+
+const GetPerspectiveTasksInputSchema = z.object({
+  perspectiveName: z.string()
+    .min(1)
+    .max(200)
+    .describe("The name of the perspective to get tasks from"),
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(50)
+    .describe("Maximum number of tasks to return")
+}).strict();
+
+server.registerTool(
+  "omnifocus_get_perspective_tasks",
+  {
+    title: "Get Perspective Tasks",
+    description: `Get tasks shown in a specific OmniFocus perspective.
+
+Switches the front OmniFocus window to the named perspective, reads the tasks it displays, then restores the original perspective.
+
+Args:
+  - perspectiveName (string): Name of the perspective (use omnifocus_list_perspectives to find names)
+  - limit (number): Maximum tasks to return, 1-500 (default: 50)
+
+Returns:
+  Array of task objects with: id, name, completed, flagged, dueDate, deferDate, projectName, tags, estimatedMinutes
+
+Examples:
+  - Get tasks from a perspective: { perspectiveName: "Next" }
+  - With limit: { perspectiveName: "Forecast", limit: 10 }`,
+    inputSchema: GetPerspectiveTasksInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { perspectiveName, limit } = params;
+
+    const safePerspectiveName = sanitizeInput(perspectiveName, 200);
+
+    const script = `
+      ${TASK_MAPPER}
+      var win = doc.documentWindows[0];
+      if (!win) { throw new Error("No OmniFocus window is open. Please open OmniFocus."); }
+
+      var originalPerspective = win.perspectiveName();
+      win.perspectiveName = "${safePerspectiveName}";
+
+      // Verify the perspective was applied
+      if (win.perspectiveName() !== "${safePerspectiveName}") {
+        throw new Error("Perspective not found: ${safePerspectiveName}");
+      }
+
+      var content = win.content();
+      var leafIds = content.leaves.id();
+
+      // Restore original perspective
+      win.perspectiveName = originalPerspective;
+
+      // Build a lookup set for fast matching
+      var idSet = {};
+      leafIds.forEach(function(id) { idSet[id] = true; });
+
+      // Find matching tasks and map them
+      var matched = doc.flattenedTasks().filter(function(t) {
+        return idSet[t.id()] === true;
+      }).slice(0, ${limit});
+
+      JSON.stringify(matched.map(mapTask));
+    `;
+
+    try {
+      const tasks = await executeAndParseJSON<TaskData[]>(script);
+
+      if (tasks.length === 0) {
+        return {
+          content: [{ type: "text", text: `No tasks found in perspective "${perspectiveName}".` }]
+        };
+      }
+
+      const output = {
+        perspectiveName,
+        count: tasks.length,
+        tasks
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error getting perspective tasks: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
 // Main
 // ============================================================================
 
