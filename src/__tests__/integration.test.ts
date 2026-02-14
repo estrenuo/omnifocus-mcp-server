@@ -48,6 +48,19 @@ describe.skip('OmniFocus Integration Tests', () => {
     });
   });
 
+  describe('Project Note Updates', () => {
+    it('should set, append, and clear a project note', async () => {
+      // 1. Find an existing project (or create one)
+      // 2. Update its note with omnifocus_update_project_note
+      // 3. Verify the note was set
+      // 4. Append additional text to the note
+      // 5. Verify the note contains both parts
+      // 6. Clear the note with an empty string
+      // 7. Verify the note is empty
+      expect(true).toBe(true);
+    });
+  });
+
   describe('Data Consistency', () => {
     it('should maintain consistent data across operations', async () => {
       // 1. List all inbox tasks
