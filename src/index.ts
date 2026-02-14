@@ -174,6 +174,54 @@ export function sanitizeArray(
 export { executeOmniFocusScript, executeAndParseJSON } from "./executor.js";
 
 // ============================================================================
+// Shared Constants
+// ============================================================================
+
+export const STATUS_MAP: Record<string, string> = {
+  "active": "active status",
+  "done": "done status",
+  "dropped": "dropped status",
+  "onHold": "on hold status"
+};
+
+// ============================================================================
+// Shared JXA Script Helpers
+// ============================================================================
+
+/**
+ * Generates JXA script to find a task by ID or name.
+ * Used by omnifocus_complete_task, omnifocus_add_tag_to_task, omnifocus_remove_tag_from_task.
+ */
+export function generateFindTaskScript(safeTaskId: string | null, safeTaskName: string | null): string {
+  if (safeTaskId) {
+    return `
+      var task = doc.flattenedTasks().find(function(t) { return t.id() === "${safeTaskId}"; });
+      if (!task) { throw new Error("Task not found with ID: ${safeTaskId}"); }
+    `;
+  }
+  return `
+    var allTasks = doc.flattenedTasks();
+    var task = allTasks.find(function(t) { return t.name() === "${safeTaskName}"; });
+    if (!task) {
+      var searchLower = "${safeTaskName!.toLowerCase()}";
+      var matches = allTasks.filter(function(t) {
+        return t.name().toLowerCase().indexOf(searchLower) !== -1;
+      });
+      if (matches.length === 0) {
+        throw new Error("No task found matching name: ${safeTaskName}");
+      } else if (matches.length > 1) {
+        var matchList = matches.map(function(t) {
+          var proj = t.containingProject();
+          return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
+        }).join("\\n");
+        throw new Error("Multiple tasks found matching '${safeTaskName}'. Please use taskId or be more specific:\\n" + matchList);
+      }
+      task = matches[0];
+    }
+  `;
+}
+
+// ============================================================================
 // Helper Scripts (JXA syntax - properties are accessed as methods)
 // ============================================================================
 
@@ -468,13 +516,7 @@ Examples:
 
     let statusFilter = "";
     if (status !== "all") {
-      const statusMap: Record<string, string> = {
-        "active": "active status",
-        "done": "done status",
-        "dropped": "dropped status",
-        "onHold": "on hold status"
-      };
-      statusFilter = `.filter(function(p) { return String(p.status()) === "${statusMap[status]}"; })`;
+      statusFilter = `.filter(function(p) { return String(p.status()) === "${STATUS_MAP[status]}"; })`;
     }
 
     let folderFilter = "";
@@ -991,46 +1033,14 @@ Examples:
       ? "task.markDropped();"
       : "task.markComplete();";
 
-    let findTaskScript: string;
-    if (safeTaskId) {
-      // Use ID if provided (takes priority)
-      findTaskScript = `
-        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${safeTaskId}"; });
-        if (!task) { throw new Error("Task not found with ID: ${safeTaskId}"); }
-      `;
-    } else if (safeTaskName) {
-      // Search by name
-      findTaskScript = `
-        var allTasks = doc.flattenedTasks();
-
-        // Try exact match first
-        var task = allTasks.find(function(t) { return t.name() === "${safeTaskName}"; });
-
-        // If no exact match, try case-insensitive partial match
-        if (!task) {
-          var searchLower = "${safeTaskName.toLowerCase()}";
-          var matches = allTasks.filter(function(t) {
-            return t.name().toLowerCase().indexOf(searchLower) !== -1;
-          });
-
-          if (matches.length === 0) {
-            throw new Error("No task found matching name: ${safeTaskName}");
-          } else if (matches.length > 1) {
-            var matchList = matches.map(function(t) {
-              var proj = t.containingProject();
-              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
-            }).join("\\n");
-            throw new Error("Multiple tasks found matching '${safeTaskName}'. Please use taskId or be more specific:\\n" + matchList);
-          }
-          task = matches[0];
-        }
-      `;
-    } else {
+    if (!safeTaskId && !safeTaskName) {
       return {
         isError: true,
         content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
       };
     }
+
+    const findTaskScript = generateFindTaskScript(safeTaskId, safeTaskName);
 
     const script = `
       ${TASK_MAPPER}
@@ -1111,46 +1121,14 @@ Examples:
     const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
     const safeTagName = sanitizeInput(tagName, 200);
 
-    let findTaskScript: string;
-    if (safeTaskId) {
-      // Use ID if provided (takes priority)
-      findTaskScript = `
-        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${safeTaskId}"; });
-        if (!task) { throw new Error("Task not found with ID: ${safeTaskId}"); }
-      `;
-    } else if (safeTaskName) {
-      // Search by name
-      findTaskScript = `
-        var allTasks = doc.flattenedTasks();
-
-        // Try exact match first
-        var task = allTasks.find(function(t) { return t.name() === "${safeTaskName}"; });
-
-        // If no exact match, try case-insensitive partial match
-        if (!task) {
-          var searchLower = "${safeTaskName.toLowerCase()}";
-          var matches = allTasks.filter(function(t) {
-            return t.name().toLowerCase().indexOf(searchLower) !== -1;
-          });
-
-          if (matches.length === 0) {
-            throw new Error("No task found matching name: ${safeTaskName}");
-          } else if (matches.length > 1) {
-            var matchList = matches.map(function(t) {
-              var proj = t.containingProject();
-              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
-            }).join("\\n");
-            throw new Error("Multiple tasks found matching '${safeTaskName}'. Please use taskId or be more specific:\\n" + matchList);
-          }
-          task = matches[0];
-        }
-      `;
-    } else {
+    if (!safeTaskId && !safeTaskName) {
       return {
         isError: true,
         content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
       };
     }
+
+    const findTaskScript = generateFindTaskScript(safeTaskId, safeTaskName);
 
     const script = `
       ${TASK_MAPPER}
@@ -1239,46 +1217,14 @@ Examples:
     const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
     const safeTagName = sanitizeInput(tagName, 200);
 
-    let findTaskScript: string;
-    if (safeTaskId) {
-      // Use ID if provided (takes priority)
-      findTaskScript = `
-        var task = doc.flattenedTasks().find(function(t) { return t.id() === "${safeTaskId}"; });
-        if (!task) { throw new Error("Task not found with ID: ${safeTaskId}"); }
-      `;
-    } else if (safeTaskName) {
-      // Search by name
-      findTaskScript = `
-        var allTasks = doc.flattenedTasks();
-
-        // Try exact match first
-        var task = allTasks.find(function(t) { return t.name() === "${safeTaskName}"; });
-
-        // If no exact match, try case-insensitive partial match
-        if (!task) {
-          var searchLower = "${safeTaskName.toLowerCase()}";
-          var matches = allTasks.filter(function(t) {
-            return t.name().toLowerCase().indexOf(searchLower) !== -1;
-          });
-
-          if (matches.length === 0) {
-            throw new Error("No task found matching name: ${safeTaskName}");
-          } else if (matches.length > 1) {
-            var matchList = matches.map(function(t) {
-              var proj = t.containingProject();
-              return "- " + t.name() + " (ID: " + t.id() + (proj ? ", Project: " + proj.name() : "") + ")";
-            }).join("\\n");
-            throw new Error("Multiple tasks found matching '${safeTaskName}'. Please use taskId or be more specific:\\n" + matchList);
-          }
-          task = matches[0];
-        }
-      `;
-    } else {
+    if (!safeTaskId && !safeTaskName) {
       return {
         isError: true,
         content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
       };
     }
+
+    const findTaskScript = generateFindTaskScript(safeTaskId, safeTaskName);
 
     const script = `
       ${TASK_MAPPER}
@@ -1782,13 +1728,7 @@ Examples:
 
     let statusFilter = "";
     if (status !== "all") {
-      const statusMap: Record<string, string> = {
-        "active": "active status",
-        "done": "done status",
-        "dropped": "dropped status",
-        "onHold": "on hold status"
-      };
-      statusFilter = `.filter(function(p) { return String(p.status()) === "${statusMap[status]}"; })`;
+      statusFilter = `.filter(function(p) { return String(p.status()) === "${STATUS_MAP[status]}"; })`;
     }
 
     const script = `
