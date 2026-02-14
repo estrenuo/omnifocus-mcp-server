@@ -23,9 +23,9 @@ npm run test:coverage
 
 ## Test Suite Overview
 
-The project includes **96 unit tests** covering:
+The project includes **103 unit tests** covering:
 
-- **Tool Handlers** (47 tests): All MCP tool endpoints including task, project, tag, folder, and search operations plus project review tools
+- **Tool Handlers** (54 tests): All MCP tool endpoints including task, project, tag, folder, search, perspective, and project review operations
 - **Input Sanitization** (49 tests): Security-focused input validation, injection prevention, array sanitization, and edge cases
 
 Additionally, **12 integration tests** are available but skipped by default (they require a running OmniFocus instance).
@@ -34,8 +34,7 @@ Additionally, **12 integration tests** are available but skipped by default (the
 
 ```
 src/__tests__/
-├── README.md              # Detailed testing documentation
-├── tools.test.ts          # MCP tool handler tests (47 tests)
+├── tools.test.ts          # MCP tool handler tests (54 tests)
 ├── sanitization.test.ts   # Input sanitization & security tests (49 tests)
 └── integration.test.ts    # End-to-end tests (12 tests, skipped by default)
 ```
@@ -239,6 +238,3 @@ npm test
 npm run test:coverage
 ```
 
----
-
-For more detailed information about the test suite structure and specific test categories, see [src/__tests__/README.md](src/__tests__/README.md).
