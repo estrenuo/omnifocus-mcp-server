@@ -388,11 +388,16 @@ function mapTag(t) {
 `;
 
 export const PERSPECTIVE_MAPPER = `
-function mapPerspective(p) {
-  return {
-    id: p.id(),
-    name: p.name()
-  };
+function mapPerspectives(limit) {
+  var names = app.perspectives.name();
+  var ids = app.perspectives.id();
+  var results = [];
+  for (var i = 0; i < names.length && results.length < limit; i++) {
+    if (names[i] != null) {
+      results.push({ id: ids[i] || null, name: names[i] });
+    }
+  }
+  return results;
 }
 `;
 
@@ -2217,8 +2222,7 @@ Examples:
 
     const script = `
       ${PERSPECTIVE_MAPPER}
-      var perspectives = doc.perspectives().slice(0, ${limit});
-      JSON.stringify(perspectives.map(mapPerspective));
+      JSON.stringify(mapPerspectives(${limit}));
     `;
 
     try {
