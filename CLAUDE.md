@@ -80,6 +80,18 @@ Folders and tags use `hidden()` instead of `status()` for filtering.
 - `omnifocus_list_perspectives` - List perspectives (built-in and custom)
 - `omnifocus_get_perspective_tasks` - Get tasks shown in a specific perspective
 
+## Testing
+
+```bash
+npm test              # Run all unit tests
+npm run test:watch    # Watch mode
+npm run test:coverage # Coverage report (output in coverage/)
+```
+
+Tests live in `src/__tests__/`: `tools.test.ts` (54 tests), `sanitization.test.ts` (49 tests), `integration.test.ts` (12 tests, skipped by default — requires running OmniFocus and modifies your database).
+
+Coverage target: 80%+ lines, 75%+ branches.
+
 ## Key Implementation Details
 
 - Date format: ISO 8601 (`YYYY-MM-DDTHH:mm:ss`) for all date parameters
