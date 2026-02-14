@@ -16,17 +16,14 @@ const execAsync = promisify(exec);
  * conversion issues (-1700). We use direct JXA property access instead.
  */
 export async function executeOmniFocusScript(script: string): Promise<string> {
-  // Escape for JXA string literal (backticks)
-  const escapedScript = script
-    .replace(/\\/g, '\\\\')
-    .replace(/`/g, '\\`')
-    .replace(/\$/g, '\\$');
-
   // The script is pure JXA - properties are accessed as methods: obj.name()
+  // No escaping needed here: the template literal interpolation is evaluated by
+  // Node.js at runtime (not re-parsed), and the script is written to a temp file
+  // (not passed as a shell argument). User input is already escaped by sanitizeInput().
   const jxaScript = `
     const app = Application("OmniFocus");
     const doc = app.defaultDocument();
-    ${escapedScript}
+    ${script}
   `;
 
   // Write to temp file to avoid shell escaping issues
