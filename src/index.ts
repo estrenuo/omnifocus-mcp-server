@@ -1257,6 +1257,229 @@ Examples:
 );
 
 // ============================================================================
+// Tool: Update Task Note
+// ============================================================================
+
+const UpdateTaskNoteInputSchema = z.object({
+  taskId: z.string()
+    .optional()
+    .describe("The task ID to update. Takes priority if both taskId and taskName are provided."),
+  taskName: z.string()
+    .optional()
+    .describe("The task name to search for. Used if taskId is not provided."),
+  note: z.string()
+    .max(10000)
+    .describe("The new note content for the task. Use empty string to clear the note."),
+  append: z.boolean()
+    .default(false)
+    .describe("If true, append to existing note instead of replacing it")
+}).strict().refine(
+  (data) => data.taskId || data.taskName,
+  { message: "Either taskId or taskName must be provided" }
+);
+
+server.registerTool(
+  "omnifocus_update_task_note",
+  {
+    title: "Update Task Note",
+    description: `Update the note/description on an existing task in OmniFocus.
+
+Use either the task ID or task name to identify the task.
+
+Args:
+  - taskId (string, optional): The task's ID. Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
+  - note (string): The new note content. Use empty string to clear the note.
+  - append (boolean): If true, append to existing note instead of replacing (default: false)
+
+Returns:
+  The updated task object
+
+Examples:
+  - Set note by ID: { taskId: "abc123", note: "Remember to include charts" }
+  - Set note by name: { taskName: "Write report", note: "Draft due Friday" }
+  - Clear note: { taskId: "abc123", note: "" }
+  - Append to note: { taskId: "abc123", note: "\\nAdditional info here", append: true }`,
+    inputSchema: UpdateTaskNoteInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskId, taskName, note, append } = params;
+
+    // Sanitize user inputs
+    const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
+    const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
+    const safeNote = sanitizeInput(note, 10000);
+
+    if (!safeTaskId && !safeTaskName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
+    }
+
+    const findTaskScript = generateFindTaskScript(safeTaskId, safeTaskName);
+
+    const noteAssignment = append
+      ? `var existing = task.note() ? String(task.note()) : ""; task.note = existing + "${safeNote}";`
+      : `task.note = "${safeNote}";`;
+
+    const script = `
+      ${TASK_MAPPER}
+      ${findTaskScript}
+      ${noteAssignment}
+      JSON.stringify(mapTask(task));
+    `;
+
+    try {
+      const task = await executeAndParseJSON<TaskData>(script);
+
+      return {
+        content: [{
+          type: "text",
+          text: `Task note updated:\n${JSON.stringify(task, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error updating task note: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Update Project Note
+// ============================================================================
+
+const UpdateProjectNoteInputSchema = z.object({
+  projectId: z.string()
+    .optional()
+    .describe("The project ID to update. Takes priority if both projectId and projectName are provided."),
+  projectName: z.string()
+    .optional()
+    .describe("The project name to search for. Used if projectId is not provided."),
+  note: z.string()
+    .max(10000)
+    .describe("The new note content for the project. Use empty string to clear the note."),
+  append: z.boolean()
+    .default(false)
+    .describe("If true, append to existing note instead of replacing it")
+}).strict().refine(
+  (data) => data.projectId || data.projectName,
+  { message: "Either projectId or projectName must be provided" }
+);
+
+server.registerTool(
+  "omnifocus_update_project_note",
+  {
+    title: "Update Project Note",
+    description: `Update the note/description on an existing project in OmniFocus.
+
+Use either the project ID or project name to identify the project.
+
+Args:
+  - projectId (string, optional): The project's ID. Takes priority if both projectId and projectName provided.
+  - projectName (string, optional): The project's name to search for. At least one of projectId or projectName is required.
+  - note (string): The new note content. Use empty string to clear the note.
+  - append (boolean): If true, append to existing note instead of replacing (default: false)
+
+Returns:
+  The updated project object
+
+Examples:
+  - Set note by ID: { projectId: "abc123", note: "Q1 deliverables" }
+  - Set note by name: { projectName: "Work Project", note: "Started Jan 2024" }
+  - Clear note: { projectId: "abc123", note: "" }
+  - Append to note: { projectId: "abc123", note: "\\nNew update", append: true }`,
+    inputSchema: UpdateProjectNoteInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { projectId, projectName, note, append } = params;
+
+    // Sanitize user inputs
+    const safeProjectId = projectId ? sanitizeInput(projectId, 100) : null;
+    const safeProjectName = projectName ? sanitizeInput(projectName, 500) : null;
+    const safeNote = sanitizeInput(note, 10000);
+
+    if (!safeProjectId && !safeProjectName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either projectId or projectName must be provided" }]
+      };
+    }
+
+    let findProjectScript: string;
+    if (safeProjectId) {
+      findProjectScript = `
+        var project = doc.flattenedProjects().find(function(p) { return p.id() === "${safeProjectId}"; });
+        if (!project) { throw new Error("Project not found with ID: ${safeProjectId}"); }
+      `;
+    } else {
+      findProjectScript = `
+        var allProjects = doc.flattenedProjects();
+        var project = allProjects.find(function(p) { return p.name() === "${safeProjectName}"; });
+        if (!project) {
+          var searchLower = "${safeProjectName!.toLowerCase()}";
+          var matches = allProjects.filter(function(p) {
+            return p.name().toLowerCase().indexOf(searchLower) !== -1;
+          });
+          if (matches.length === 0) {
+            throw new Error("No project found matching name: ${safeProjectName}");
+          } else if (matches.length > 1) {
+            var matchList = matches.map(function(p) {
+              var folder = p.folder();
+              return "- " + p.name() + " (ID: " + p.id() + (folder ? ", Folder: " + folder.name() : "") + ")";
+            }).join("\\n");
+            throw new Error("Multiple projects found matching '${safeProjectName}'. Please use projectId or be more specific:\\n" + matchList);
+          }
+          project = matches[0];
+        }
+      `;
+    }
+
+    const noteAssignment = append
+      ? `var existing = project.note() ? String(project.note()) : ""; project.note = existing + "${safeNote}";`
+      : `project.note = "${safeNote}";`;
+
+    const script = `
+      ${PROJECT_MAPPER}
+      ${findProjectScript}
+      ${noteAssignment}
+      JSON.stringify(mapProject(project));
+    `;
+
+    try {
+      const project = await executeAndParseJSON<ProjectData>(script);
+
+      return {
+        content: [{
+          type: "text",
+          text: `Project note updated:\n${JSON.stringify(project, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error updating project note: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
 // Tool: Search
 // ============================================================================
 

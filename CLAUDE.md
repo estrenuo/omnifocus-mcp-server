@@ -70,6 +70,8 @@ Folders and tags use `hidden()` instead of `status()` for filtering.
 - `omnifocus_complete_task` - Complete or drop a task (action: "complete" | "drop")
 - `omnifocus_add_tag_to_task` - Add tag to task
 - `omnifocus_remove_tag_from_task` - Remove tag from task
+- `omnifocus_update_task_note` - Update/clear/append to a task's note
+- `omnifocus_update_project_note` - Update/clear/append to a project's note
 - `omnifocus_search` - Search tasks, projects, folders, tags
 - `omnifocus_get_due_tasks` - Get tasks due within N days
 - `omnifocus_get_flagged_tasks` - Get flagged tasks

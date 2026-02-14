@@ -474,6 +474,144 @@ describe('omnifocus_remove_tag_from_task', () => {
   });
 });
 
+describe('omnifocus_update_task_note', () => {
+  it('should set note by task ID', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask({ id: 'task-1', note: 'New note' }));
+
+    const result = await client.callTool({
+      name: 'omnifocus_update_task_note',
+      arguments: { taskId: 'task-1', note: 'New note' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('t.id() === "task-1"');
+    expect(script).toContain('task.note = "New note"');
+    expect(script).toContain('mapTask');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Task note updated');
+  });
+
+  it('should search by task name', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask({ name: 'Write docs', note: 'Updated' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_task_note',
+      arguments: { taskName: 'Write docs', note: 'Updated' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('t.name() === "Write docs"');
+    expect(script).toContain('task.note = "Updated"');
+  });
+
+  it('should clear note with empty string', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask({ id: 'task-1', note: '' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_task_note',
+      arguments: { taskId: 'task-1', note: '' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('task.note = ""');
+  });
+
+  it('should append to existing note when append is true', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask({ id: 'task-1', note: 'Old\nNew' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_task_note',
+      arguments: { taskId: 'task-1', note: '\nNew', append: true },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('var existing = task.note()');
+    expect(script).toContain('existing +');
+  });
+
+  it('should return error when task not found', async () => {
+    vi.mocked(executeAndParseJSON).mockRejectedValue(new Error('Task not found with ID: bad-id'));
+
+    const result = await client.callTool({
+      name: 'omnifocus_update_task_note',
+      arguments: { taskId: 'bad-id', note: 'test' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('Task not found');
+  });
+});
+
+describe('omnifocus_update_project_note', () => {
+  it('should set note by project ID', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ id: 'proj-1', note: 'Project info' }));
+
+    const result = await client.callTool({
+      name: 'omnifocus_update_project_note',
+      arguments: { projectId: 'proj-1', note: 'Project info' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('p.id() === "proj-1"');
+    expect(script).toContain('project.note = "Project info"');
+    expect(script).toContain('mapProject');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Project note updated');
+  });
+
+  it('should search by project name', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ name: 'Work Project', note: 'Updated' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_project_note',
+      arguments: { projectName: 'Work Project', note: 'Updated' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('p.name() === "Work Project"');
+    expect(script).toContain('project.note = "Updated"');
+  });
+
+  it('should clear note with empty string', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ id: 'proj-1', note: '' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_project_note',
+      arguments: { projectId: 'proj-1', note: '' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('project.note = ""');
+  });
+
+  it('should append to existing note when append is true', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ id: 'proj-1', note: 'Old\nNew' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_project_note',
+      arguments: { projectId: 'proj-1', note: '\nNew', append: true },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('var existing = project.note()');
+    expect(script).toContain('existing +');
+  });
+
+  it('should return error when project not found', async () => {
+    vi.mocked(executeAndParseJSON).mockRejectedValue(new Error('Project not found with ID: bad-id'));
+
+    const result = await client.callTool({
+      name: 'omnifocus_update_project_note',
+      arguments: { projectId: 'bad-id', note: 'test' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('Project not found');
+  });
+});
+
 describe('omnifocus_search', () => {
   it('should search across all types by default', async () => {
     // Search calls executeAndParseJSON once per type (4 times for "all")
