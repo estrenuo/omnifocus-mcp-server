@@ -10,10 +10,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { exec } from "child_process";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
+import { executeOmniFocusScript, executeAndParseJSON } from "./executor.js";
 
 // ============================================================================
 // Types
@@ -173,77 +170,8 @@ export function sanitizeArray(
   return items.map(item => sanitizeInput(item, maxLength));
 }
 
-// ============================================================================
-// OmniFocus Executor - JXA VERSION
-// ============================================================================
-
-/**
- * Executes JXA (JavaScript for Automation) to interact with OmniFocus.
- * Note: doc.evaluate() for Omni Automation doesn't work from JXA due to type
- * conversion issues (-1700). We use direct JXA property access instead.
- */
-export async function executeOmniFocusScript(script: string): Promise<string> {
-  // Escape for JXA string literal (backticks)
-  const escapedScript = script
-    .replace(/\\/g, '\\\\')
-    .replace(/`/g, '\\`')
-    .replace(/\$/g, '\\$');
-
-  // The script is pure JXA - properties are accessed as methods: obj.name()
-  const jxaScript = `
-    const app = Application("OmniFocus");
-    const doc = app.defaultDocument();
-    ${escapedScript}
-  `;
-
-  // Write to temp file to avoid shell escaping issues
-  const fs = await import('fs/promises');
-  const os = await import('os');
-  const path = await import('path');
-
-  const tmpFile = path.join(os.tmpdir(), `omnifocus-script-${Date.now()}.js`);
-  await fs.writeFile(tmpFile, jxaScript, 'utf8');
-
-  try {
-    const { stdout, stderr } = await execAsync(
-      `osascript -l JavaScript "${tmpFile}"`,
-      { maxBuffer: 10 * 1024 * 1024 }
-    );
-
-    await fs.unlink(tmpFile).catch(() => {});
-
-    if (stderr && !stdout) {
-      throw new Error(stderr);
-    }
-
-    return stdout.trim();
-  } catch (error: unknown) {
-    await fs.unlink(tmpFile).catch(() => {});
-
-    if (error instanceof Error) {
-      if (error.message.includes("is not running")) {
-        throw new Error("OmniFocus is not running. Please launch OmniFocus first.");
-      }
-      if (error.message.includes("not allowed") || error.message.includes("niet toegestaan")) {
-        throw new Error("Script access to OmniFocus is not allowed. Enable automation permissions in System Preferences > Security & Privacy > Privacy > Automation.");
-      }
-      throw new Error(`OmniFocus script error: ${error.message}`);
-    }
-    throw error;
-  }
-}
-
-/**
- * Executes a script and parses the JSON result
- */
-export async function executeAndParseJSON<T>(script: string): Promise<T> {
-  const result = await executeOmniFocusScript(script);
-  try {
-    return JSON.parse(result) as T;
-  } catch {
-    throw new Error(`Failed to parse OmniFocus response: ${result}`);
-  }
-}
+// Re-export executor functions for backwards compatibility
+export { executeOmniFocusScript, executeAndParseJSON } from "./executor.js";
 
 // ============================================================================
 // Helper Scripts (JXA syntax - properties are accessed as methods)
@@ -405,7 +333,7 @@ function mapPerspectives(limit) {
 // MCP Server Setup
 // ============================================================================
 
-const server = new McpServer({
+export const server = new McpServer({
   name: "omnifocus-mcp-server",
   version: "1.0.0"
 });
@@ -2374,7 +2302,15 @@ async function main(): Promise<void> {
   console.error("OmniFocus MCP Server running on stdio");
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
-});
+// Only auto-connect when run directly (not when imported for tests)
+const isDirectRun = process.argv[1] && (
+  process.argv[1].endsWith('/index.js') ||
+  process.argv[1].endsWith('/index.ts')
+);
+
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });
+}
