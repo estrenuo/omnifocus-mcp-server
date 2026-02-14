@@ -537,7 +537,7 @@ Examples:
   },
   async (params) => {
     const { status, folderName, limit } = params;
-    
+
     let statusFilter = "";
     if (status !== "all") {
       const statusMap: Record<string, string> = {
@@ -551,9 +551,10 @@ Examples:
 
     let folderFilter = "";
     if (folderName) {
+      const safeFolderName = sanitizeInput(folderName, 500);
       folderFilter = `.filter(function(p) {
         var pf = p.folder();
-        return pf && pf.name().toLowerCase().indexOf("${folderName.toLowerCase()}") !== -1;
+        return pf && pf.name().toLowerCase().indexOf("${safeFolderName.toLowerCase()}") !== -1;
       })`;
     }
 
@@ -779,12 +780,15 @@ const CreateTaskInputSchema = z.object({
     .optional()
     .describe("ID of parent task to create this as a subtask (makes this task a child of the parent)"),
   dueDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/, "Must be ISO 8601 format (e.g., '2024-12-31T17:00:00')")
     .optional()
     .describe("Due date in ISO 8601 format (e.g., '2024-12-31T17:00:00')"),
   deferDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/, "Must be ISO 8601 format (e.g., '2024-12-31T17:00:00')")
     .optional()
     .describe("Defer/start date in ISO 8601 format"),
   plannedDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/, "Must be ISO 8601 format (e.g., '2024-12-31T17:00:00')")
     .optional()
     .describe("Planned date in ISO 8601 format - when you intend to work on the task"),
   flagged: z.boolean()
@@ -884,6 +888,9 @@ Examples:
     const safeNote = note ? sanitizeInput(note, 10000) : "";
     const safeProjectName = projectName ? sanitizeInput(projectName, 500) : null;
     const safeParentTaskId = parentTaskId ? sanitizeInput(parentTaskId, 100) : null;
+    const safeDueDate = dueDate ? sanitizeInput(dueDate, 100) : null;
+    const safeDeferDate = deferDate ? sanitizeInput(deferDate, 100) : null;
+    const safePlannedDate = plannedDate ? sanitizeInput(plannedDate, 100) : null;
 
     let createScript: string;
     if (safeParentTaskId) {
@@ -963,9 +970,9 @@ Examples:
       ${TASK_MAPPER}
       ${createScript}
       ${note ? `task.note = "${safeNote}";` : ""}
-      ${dueDate ? `task.dueDate = new Date("${dueDate}");` : ""}
-      ${deferDate ? `task.deferDate = new Date("${deferDate}");` : ""}
-      ${plannedDate ? `try { task.plannedDate = new Date("${plannedDate}"); } catch(e) {}` : ""}
+      ${safeDueDate ? `task.dueDate = new Date("${safeDueDate}");` : ""}
+      ${safeDeferDate ? `task.deferDate = new Date("${safeDeferDate}");` : ""}
+      ${safePlannedDate ? `try { task.plannedDate = new Date("${safePlannedDate}"); } catch(e) {}` : ""}
       ${flagged ? `task.flagged = true;` : ""}
       ${estimatedMinutes ? `task.estimatedMinutes = ${estimatedMinutes};` : ""}
       ${safeTagNames.length > 0 ? `
