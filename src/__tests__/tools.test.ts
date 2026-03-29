@@ -354,7 +354,7 @@ describe('omnifocus_create_task', () => {
     expect(script).toContain('"Work"');
     expect(script).toContain('"Urgent"');
     expect(script).toContain('doc.flattenedTags()');
-    expect(script).toContain('task.tags.push(tag)');
+    expect(script).toContain('app.add(tag, { to: task.tags })');
   });
 
   it('should reject invalid date format', async () => {
