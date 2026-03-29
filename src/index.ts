@@ -561,6 +561,93 @@ Examples:
 );
 
 // ============================================================================
+// Tool: Get Project Tasks
+// ============================================================================
+
+const GetProjectTasksInputSchema = z.object({
+  projectId: z.string()
+    .describe("The ID of the project to get tasks for"),
+  includeCompleted: z.boolean()
+    .default(false)
+    .describe("Include completed tasks"),
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(100)
+    .describe("Maximum number of tasks to return")
+}).strict();
+
+server.registerTool(
+  "omnifocus_get_project_tasks",
+  {
+    title: "Get Project Tasks",
+    description: `Get all tasks belonging to a specific project in OmniFocus.
+
+Returns the tasks within a project, including subtasks. Use omnifocus_list_projects to find project IDs first.
+
+Args:
+  - projectId (string): The ID of the project
+  - includeCompleted (boolean): Include completed tasks (default: false)
+  - limit (number): Maximum tasks to return, 1-500 (default: 100)
+
+Returns:
+  Array of task objects with: id, name, note, completed, flagged, dueDate, deferDate, estimatedMinutes, tags, parentTaskId, parentTaskName, hasChildren, childTaskCount
+
+Examples:
+  - Get tasks for a project: { projectId: "abc123" }
+  - Include completed: { projectId: "abc123", includeCompleted: true }`,
+    inputSchema: GetProjectTasksInputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { projectId, includeCompleted, limit } = params;
+    const safeProjectId = sanitizeInput(projectId, 500);
+
+    const script = `
+      ${TASK_MAPPER}
+      var project = doc.flattenedProjects().find(function(p) { return p.id() === "${safeProjectId}"; });
+      if (!project) {
+        throw new Error("Project not found with ID: ${safeProjectId}");
+      }
+      var tasks = project.flattenedTasks();
+      ${!includeCompleted ? 'tasks = tasks.filter(function(t) { return !t.completed(); });' : ''}
+      tasks = tasks.slice(0, ${limit});
+      JSON.stringify(tasks.map(mapTask));
+    `;
+
+    try {
+      const tasks = await executeAndParseJSON<TaskData[]>(script);
+
+      if (tasks.length === 0) {
+        return {
+          content: [{ type: "text", text: "No tasks found in this project." }]
+        };
+      }
+
+      const output = {
+        count: tasks.length,
+        tasks: tasks
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(output, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error getting project tasks: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
 // Tool: List Folders
 // ============================================================================
 

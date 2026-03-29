@@ -64,6 +64,7 @@ Folders and tags use `hidden()` instead of `status()` for filtering.
 
 - `omnifocus_list_inbox` - List inbox tasks
 - `omnifocus_list_projects` - List projects (filterable by status, folder)
+- `omnifocus_get_project_tasks` - Get all tasks for a specific project
 - `omnifocus_list_folders` - List folders
 - `omnifocus_list_tags` - List tags
 - `omnifocus_create_task` - Create task (inbox or in project, with tags)
@@ -90,7 +91,7 @@ npm run test:watch    # Watch mode
 npm run test:coverage # Coverage report (output in coverage/)
 ```
 
-Tests live in `src/__tests__/`: `tools.test.ts` (54 tests), `sanitization.test.ts` (49 tests), `integration.test.ts` (12 tests, skipped by default — requires running OmniFocus and modifies your database).
+Tests live in `src/__tests__/`: `tools.test.ts` (58 tests), `sanitization.test.ts` (49 tests), `integration.test.ts` (14 tests, skipped by default — requires running OmniFocus and modifies your database).
 
 Coverage target: 80%+ lines, 75%+ branches.
 

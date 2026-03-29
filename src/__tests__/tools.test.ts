@@ -217,6 +217,69 @@ describe('omnifocus_list_projects', () => {
   });
 });
 
+describe('omnifocus_get_project_tasks', () => {
+  it('should get tasks for a project by ID', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask({ projectName: 'My Project' })]);
+
+    await client.callTool({ name: 'omnifocus_get_project_tasks', arguments: { projectId: 'proj-123' } });
+    const script = getCapturedScript();
+
+    expect(script).toContain('doc.flattenedProjects()');
+    expect(script).toContain('proj-123');
+    expect(script).toContain('flattenedTasks');
+    expect(script).toContain('mapTask');
+  });
+
+  it('should exclude completed tasks by default', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask()]);
+
+    await client.callTool({ name: 'omnifocus_get_project_tasks', arguments: { projectId: 'proj-123' } });
+    const script = getCapturedScript();
+
+    expect(script).toContain('!t.completed()');
+  });
+
+  it('should include completed tasks when requested', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask({ completed: true })]);
+
+    await client.callTool({ name: 'omnifocus_get_project_tasks', arguments: { projectId: 'proj-123', includeCompleted: true } });
+    const script = getCapturedScript();
+
+    expect(script).not.toContain('!t.completed()');
+  });
+
+  it('should sanitize projectId in JXA script', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([]);
+
+    await client.callTool({ name: 'omnifocus_get_project_tasks', arguments: { projectId: '"); doEvil("' } });
+    const script = getCapturedScript();
+
+    // The quotes should be escaped so the injection is neutralized
+    expect(script).toContain('\\"');
+    expect(script).not.toContain('"; doEvil("');
+  });
+
+  it('should return empty message when no tasks found', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([]);
+
+    const result = await client.callTool({ name: 'omnifocus_get_project_tasks', arguments: { projectId: 'proj-123' } });
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+
+    expect(text).toBe('No tasks found in this project.');
+  });
+
+  it('should return task count and tasks array', async () => {
+    const mockTasks = [createMockTask({ id: 't1', name: 'Task 1' }), createMockTask({ id: 't2', name: 'Task 2' })];
+    vi.mocked(executeAndParseJSON).mockResolvedValue(mockTasks);
+
+    const result = await client.callTool({ name: 'omnifocus_get_project_tasks', arguments: { projectId: 'proj-123' } });
+    const parsed = parseResult(result as { content: Array<{ type: string; text: string }> }) as { count: number; tasks: TaskData[] };
+
+    expect(parsed.count).toBe(2);
+    expect(parsed.tasks).toHaveLength(2);
+  });
+});
+
 describe('omnifocus_list_folders', () => {
   it('should filter active folders by default', async () => {
     const mockFolders: FolderData[] = [{ id: 'f1', name: 'Work', status: 'active', projectCount: 5, folderCount: 2, parentName: null }];
