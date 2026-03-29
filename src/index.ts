@@ -950,7 +950,7 @@ Examples:
         var allTags = doc.flattenedTags();
         tagNamesToAdd.forEach(function(tagName) {
           var tag = allTags.find(function(t) { return t.name() === tagName; });
-          if (tag) { task.tags.push(tag); }
+          if (tag) { app.add(tag, { to: task.tags }); }
         });
       ` : ""}
       ${recurrenceScript}
@@ -1081,10 +1081,7 @@ const AddTagInputSchema = z.object({
     .describe("The task name to search for. Used if taskId is not provided."),
   tagName: z.string()
     .describe("The name of the tag to add")
-}).strict().refine(
-  (data) => data.taskId || data.taskName,
-  { message: "Either taskId or taskName must be provided" }
-);
+}).strict();
 
 server.registerTool(
   "omnifocus_add_tag_to_task",
@@ -1177,10 +1174,7 @@ const RemoveTagInputSchema = z.object({
     .describe("The task name to search for. Used if taskId is not provided."),
   tagName: z.string()
     .describe("The name of the tag to remove")
-}).strict().refine(
-  (data) => data.taskId || data.taskName,
-  { message: "Either taskId or taskName must be provided" }
-);
+}).strict();
 
 server.registerTool(
   "omnifocus_remove_tag_from_task",
