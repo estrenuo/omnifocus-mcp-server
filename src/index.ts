@@ -2537,6 +2537,133 @@ Examples:
 );
 
 // ============================================================================
+// Tool: Create Project
+// ============================================================================
+
+const CreateProjectInputSchema = z.object({
+  name: z.string()
+    .min(1)
+    .max(500)
+    .describe("Project name (required)"),
+  note: z.string()
+    .max(10000)
+    .optional()
+    .describe("Optional note/description for the project"),
+  folderName: z.string()
+    .max(500)
+    .optional()
+    .describe("Name of the folder to place the project in. If omitted, project is created at the top level."),
+  dueDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/, "Must be ISO 8601 format (e.g., '2024-12-31T17:00:00')")
+    .optional()
+    .describe("Due date in ISO 8601 format"),
+  deferDate: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/, "Must be ISO 8601 format (e.g., '2024-12-31T17:00:00')")
+    .optional()
+    .describe("Defer/start date in ISO 8601 format"),
+  flagged: z.boolean()
+    .default(false)
+    .describe("Whether to flag the project"),
+  sequential: z.boolean()
+    .default(false)
+    .describe("If true, tasks must be completed in order (sequential project). Default is parallel."),
+  status: z.enum(["active", "on hold", "done", "dropped"])
+    .default("active")
+    .describe("Initial project status")
+}).strict();
+
+server.registerTool(
+  "omnifocus_create_project",
+  {
+    title: "Create Project",
+    description: `Create a new project in OmniFocus.
+
+Creates a project at the top level or inside a specific folder. Optional properties like due date, defer date, flags, and sequential ordering can be set.
+
+Args:
+  - name (string): Project name (required)
+  - note (string): Optional note/description
+  - folderName (string): Folder to place the project in (top level if omitted)
+  - dueDate (string): Due date in ISO 8601 format
+  - deferDate (string): Defer/start date in ISO 8601 format
+  - flagged (boolean): Flag the project (default: false)
+  - sequential (boolean): Tasks must be done in order (default: false = parallel)
+  - status (string): "active", "on hold", "done", or "dropped" (default: "active")
+
+Returns:
+  The created project object with id, name, and other properties
+
+Examples:
+  - Simple project: { name: "Launch website" }
+  - In a folder: { name: "Q1 Planning", folderName: "Work" }
+  - With details: { name: "Write book", dueDate: "2024-12-31T17:00:00", sequential: true, flagged: true }`,
+    inputSchema: CreateProjectInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { name, note, folderName, dueDate, deferDate, flagged, sequential, status } = params;
+
+    const safeName = sanitizeInput(name, 500);
+    const safeNote = note ? sanitizeInput(note, 10000) : "";
+    const safeFolderName = folderName ? sanitizeInput(folderName, 500) : null;
+    const safeDueDate = dueDate ? sanitizeInput(dueDate, 100) : null;
+    const safeDeferDate = deferDate ? sanitizeInput(deferDate, 100) : null;
+
+    const statusMap: Record<string, string> = {
+      "active": "active status",
+      "on hold": "on hold status",
+      "done": "done status",
+      "dropped": "dropped status"
+    };
+    const jxaStatus = statusMap[status];
+
+    const createScript = safeFolderName
+      ? `
+        var folder = doc.flattenedFolders().find(function(f) { return f.name() === "${safeFolderName}"; });
+        if (!folder) { throw new Error("Folder not found: ${safeFolderName}"); }
+        var project = app.Project({name: "${safeName}"});
+        folder.projects.push(project);
+      `
+      : `
+        var project = app.Project({name: "${safeName}"});
+        doc.projects.push(project);
+      `;
+
+    const script = `
+      ${PROJECT_MAPPER}
+      ${createScript}
+      ${safeNote ? `project.note = "${safeNote}";` : ""}
+      ${safeDueDate ? `project.dueDate = new Date("${safeDueDate}");` : ""}
+      ${safeDeferDate ? `project.deferDate = new Date("${safeDeferDate}");` : ""}
+      ${flagged ? `project.flagged = true;` : ""}
+      ${sequential ? `project.sequential = true;` : ""}
+      project.status = "${jxaStatus}";
+      JSON.stringify(mapProject(project));
+    `;
+
+    try {
+      const project = await executeAndParseJSON<ProjectData>(script);
+      return {
+        content: [{
+          type: "text",
+          text: `Project created successfully:\n${JSON.stringify(project, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error creating project: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
 // Main
 // ============================================================================
 

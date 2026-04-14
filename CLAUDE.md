@@ -68,6 +68,7 @@ Folders and tags use `hidden()` instead of `status()` for filtering.
 - `omnifocus_list_folders` - List folders
 - `omnifocus_list_tags` - List tags
 - `omnifocus_create_task` - Create task (inbox or in project, with tags)
+- `omnifocus_create_project` - Create a new project (optionally inside a folder, with status, dates, sequential mode)
 - `omnifocus_complete_task` - Complete or drop a task (action: "complete" | "drop")
 - `omnifocus_add_tag_to_task` - Add tag to task
 - `omnifocus_remove_tag_from_task` - Remove tag from task
