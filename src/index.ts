@@ -125,8 +125,10 @@ export function sanitizeInput(input: string, maxLength: number = 500): string {
     }
   }
 
-  // 4. Check for excessive control characters that could cause issues
-  const controlCharCount = (input.match(/[\x00-\x1F\x7F-\x9F]/g) || []).length;
+  // 4. Check for excessive control characters that could cause issues.
+  // Excludes tab (0x09), newline (0x0A) and carriage return (0x0D) — these are
+  // legitimate text-formatting characters in notes and should be allowed.
+  const controlCharCount = (input.match(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g) || []).length;
   if (controlCharCount > 10) {
     throw new Error('Input contains excessive control characters');
   }

@@ -137,8 +137,8 @@ describe('Input Sanitization Security', () => {
     });
 
     it('should reject excessive control characters', () => {
-      // Create string with 11 control characters (threshold is 10)
-      const controlString = 'text' + '\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B';
+      // Create string with 11 truly dangerous control characters (excludes \t, \n, \r)
+      const controlString = 'text' + '\x01\x02\x03\x04\x05\x06\x07\x08\x0B\x0C\x0E\x0F';
       expect(() => sanitizeInput(controlString)).toThrow('excessive control characters');
     });
 
@@ -149,6 +149,14 @@ describe('Input Sanitization Security', () => {
       expect(result).toContain('\\n');
       expect(result).toContain('\\r');
       expect(result).toContain('\\t');
+    });
+
+    it('should allow notes with many newlines', () => {
+      // Notes can have more than 10 newlines — they are legitimate formatting
+      const noteWithManyNewlines = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10\nLine 11\nLine 12';
+      const result = sanitizeInput(noteWithManyNewlines, 10000);
+      expect(result).toContain('\\n');
+      expect(result.split('\\n').length).toBe(12);
     });
 
     it('should reject non-string input', () => {
