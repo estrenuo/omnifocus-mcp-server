@@ -2808,17 +2808,42 @@ Examples:
     if (projectId !== undefined || projectName !== undefined) {
       const safeProjectId = projectId ? sanitizeInput(projectId, 100) : null;
       const safeProjectName = projectName ? sanitizeInput(projectName, 500) : null;
-      if (safeProjectId) {
-        moveToProjectScript = `
-      var targetProject = doc.flattenedProjects().find(function(p) { return p.id() === "${safeProjectId}"; });
-      if (!targetProject) { throw new Error("Project not found with ID: ${safeProjectId}"); }
-      task.assignedContainer = targetProject;`;
-      } else if (safeProjectName) {
-        moveToProjectScript = `
-      var targetProject = doc.flattenedProjects().find(function(p) { return p.name() === "${safeProjectName}"; });
-      if (!targetProject) { throw new Error("Project not found: ${safeProjectName}"); }
-      task.assignedContainer = targetProject;`;
-      }
+      const projectLookup = safeProjectId
+        ? `doc.flattenedProjects().find(function(p) { return p.id() === "${safeProjectId}"; })`
+        : `doc.flattenedProjects().find(function(p) { return p.name() === "${safeProjectName}"; })`;
+      const notFoundMsg = safeProjectId
+        ? `Project not found with ID: ${safeProjectId}`
+        : `Project not found: ${safeProjectName}`;
+
+      // OmniFocus JXA does not support moving tasks between containers directly.
+      // The only working approach is to copy all properties to a new task in the target
+      // project, delete the original, and reassign `task` so subsequent updates apply correctly.
+      moveToProjectScript = `
+      var targetProject = ${projectLookup};
+      if (!targetProject) { throw new Error("${notFoundMsg}"); }
+      var origName = task.name();
+      var origNote = task.note() || "";
+      var origFlagged = task.flagged();
+      var origDueDate = task.dueDate();
+      var origDeferDate = task.deferDate();
+      var origEstimated = task.estimatedMinutes();
+      var origTags = task.tags().map(function(tag) { return tag.name(); });
+      var origPlannedDate = null;
+      try { origPlannedDate = task.plannedDate(); } catch(e) {}
+      var newTask = app.Task({ name: origName });
+      targetProject.tasks.push(newTask);
+      newTask.note = origNote;
+      newTask.flagged = origFlagged;
+      if (origDueDate) newTask.dueDate = origDueDate;
+      if (origDeferDate) newTask.deferDate = origDeferDate;
+      if (origEstimated) newTask.estimatedMinutes = origEstimated;
+      if (origPlannedDate) { try { newTask.plannedDate = origPlannedDate; } catch(e) {} }
+      origTags.forEach(function(tagName) {
+        var tag = doc.flattenedTags().find(function(t) { return t.name() === tagName; });
+        if (tag) app.add(tag, { to: newTask.tags });
+      });
+      app.delete(task);
+      task = newTask;`;
     }
 
     if (updateLines.length === 0 && moveToProjectScript === "") {
@@ -2831,8 +2856,8 @@ Examples:
     const script = `
       ${TASK_MAPPER}
       ${findTaskScript}
-      ${updateLines.join("\n      ")}
       ${moveToProjectScript}
+      ${updateLines.join("\n      ")}
       JSON.stringify(mapTask(task));
     `;
 
