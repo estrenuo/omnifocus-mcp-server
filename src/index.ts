@@ -2666,6 +2666,249 @@ Examples:
 );
 
 // ============================================================================
+// Tool: Update Task
+// ============================================================================
+
+const UpdateTaskInputSchema = z.object({
+  taskId: z.string()
+    .optional()
+    .describe("The task ID to update. Takes priority if both taskId and taskName are provided."),
+  taskName: z.string()
+    .optional()
+    .describe("The task name to search for. At least one of taskId or taskName is required."),
+  name: z.string()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("New task name"),
+  note: z.string()
+    .max(10000)
+    .nullable()
+    .optional()
+    .describe("New note text. Pass null to clear the note."),
+  dueDate: z.string()
+    .nullable()
+    .optional()
+    .describe("New due date in ISO 8601 format. Pass null to clear."),
+  deferDate: z.string()
+    .nullable()
+    .optional()
+    .describe("New defer/start date in ISO 8601 format. Pass null to clear."),
+  plannedDate: z.string()
+    .nullable()
+    .optional()
+    .describe("New planned date in ISO 8601 format. Pass null to clear."),
+  flagged: z.boolean()
+    .optional()
+    .describe("Set flagged state"),
+  estimatedMinutes: z.number()
+    .int()
+    .min(0)
+    .max(9999)
+    .optional()
+    .describe("Estimated time in minutes. Pass 0 to clear.")
+}).strict().refine(
+  (data) => data.taskId || data.taskName,
+  { message: "Either taskId or taskName must be provided" }
+);
+
+server.registerTool(
+  "omnifocus_update_task",
+  {
+    title: "Update Task",
+    description: `Update properties of an existing task in OmniFocus.
+
+Only the fields you provide are changed. Use null to clear a date or note field.
+
+Args:
+  - taskId (string, optional): The task's ID. Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
+  - name (string, optional): New task name
+  - note (string | null, optional): New note text. Pass null to clear.
+  - dueDate (string | null, optional): New due date in ISO 8601 format. Pass null to clear.
+  - deferDate (string | null, optional): New defer date in ISO 8601 format. Pass null to clear.
+  - plannedDate (string | null, optional): New planned date in ISO 8601 format. Pass null to clear.
+  - flagged (boolean, optional): Set flagged state
+  - estimatedMinutes (number, optional): Time estimate in minutes. Pass 0 to clear.
+
+Returns:
+  The updated task object
+
+Examples:
+  - Rename: { taskId: "abc123", name: "New name" }
+  - Set due date: { taskId: "abc123", dueDate: "2024-12-31T17:00:00" }
+  - Clear due date: { taskId: "abc123", dueDate: null }
+  - Flag and estimate: { taskId: "abc123", flagged: true, estimatedMinutes: 30 }`,
+    inputSchema: UpdateTaskInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskId, taskName, name, note, dueDate, deferDate, plannedDate, flagged, estimatedMinutes } = params;
+
+    const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
+    const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
+
+    if (!safeTaskId && !safeTaskName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
+    }
+
+    const findTaskScript = generateFindTaskScript(safeTaskId, safeTaskName);
+
+    const updateLines: string[] = [];
+
+    if (name !== undefined) {
+      const safeName = sanitizeInput(name, 500);
+      updateLines.push(`task.name = "${safeName}";`);
+    }
+    if (note !== undefined) {
+      const safeNote = note === null ? "" : sanitizeInput(note, 10000);
+      updateLines.push(`task.note = "${safeNote}";`);
+    }
+    if (dueDate !== undefined) {
+      updateLines.push(dueDate === null
+        ? `task.dueDate = null;`
+        : `task.dueDate = new Date("${sanitizeInput(dueDate, 100)}");`);
+    }
+    if (deferDate !== undefined) {
+      updateLines.push(deferDate === null
+        ? `task.deferDate = null;`
+        : `task.deferDate = new Date("${sanitizeInput(deferDate, 100)}");`);
+    }
+    if (plannedDate !== undefined) {
+      updateLines.push(plannedDate === null
+        ? `try { task.plannedDate = null; } catch(e) {}`
+        : `try { task.plannedDate = new Date("${sanitizeInput(plannedDate, 100)}"); } catch(e) {}`);
+    }
+    if (flagged !== undefined) {
+      updateLines.push(`task.flagged = ${flagged};`);
+    }
+    if (estimatedMinutes !== undefined) {
+      updateLines.push(estimatedMinutes === 0
+        ? `task.estimatedMinutes = null;`
+        : `task.estimatedMinutes = ${estimatedMinutes};`);
+    }
+
+    if (updateLines.length === 0) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "No fields to update were provided" }]
+      };
+    }
+
+    const script = `
+      ${TASK_MAPPER}
+      ${findTaskScript}
+      ${updateLines.join("\n      ")}
+      JSON.stringify(mapTask(task));
+    `;
+
+    try {
+      const task = await executeAndParseJSON<TaskData>(script);
+      return {
+        content: [{
+          type: "text",
+          text: `Task updated:\n${JSON.stringify(task, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error updating task: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Delete Task
+// ============================================================================
+
+const DeleteTaskInputSchema = z.object({
+  taskId: z.string()
+    .optional()
+    .describe("The task ID to delete. Takes priority if both taskId and taskName are provided."),
+  taskName: z.string()
+    .optional()
+    .describe("The task name to search for. At least one of taskId or taskName is required.")
+}).strict().refine(
+  (data) => data.taskId || data.taskName,
+  { message: "Either taskId or taskName must be provided" }
+);
+
+server.registerTool(
+  "omnifocus_delete_task",
+  {
+    title: "Delete Task",
+    description: `Permanently delete a task from OmniFocus. This cannot be undone via MCP.
+
+Use either the task ID from list/search results, or the task name.
+
+Args:
+  - taskId (string, optional): The task's ID. Takes priority if both taskId and taskName provided.
+  - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
+
+Returns:
+  Confirmation message with the deleted task's name
+
+Examples:
+  - Delete by ID: { taskId: "abc123" }
+  - Delete by name: { taskName: "Old draft" }`,
+    inputSchema: DeleteTaskInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskId, taskName } = params;
+
+    const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
+    const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
+
+    if (!safeTaskId && !safeTaskName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either taskId or taskName must be provided" }]
+      };
+    }
+
+    const findTaskScript = generateFindTaskScript(safeTaskId, safeTaskName);
+
+    const script = `
+      ${findTaskScript}
+      var deletedName = task.name();
+      app.delete(task);
+      JSON.stringify({ deleted: true, name: deletedName });
+    `;
+
+    try {
+      const result = await executeAndParseJSON<{ deleted: boolean; name: string }>(script);
+      return {
+        content: [{
+          type: "text",
+          text: `Task deleted: "${result.name}"`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error deleting task: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
 // Main
 // ============================================================================
 
