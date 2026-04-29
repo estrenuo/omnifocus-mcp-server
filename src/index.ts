@@ -2706,7 +2706,13 @@ const UpdateTaskInputSchema = z.object({
     .min(0)
     .max(9999)
     .optional()
-    .describe("Estimated time in minutes. Pass 0 to clear.")
+    .describe("Estimated time in minutes. Pass 0 to clear."),
+  projectId: z.string()
+    .optional()
+    .describe("ID of the project to move the task to."),
+  projectName: z.string()
+    .optional()
+    .describe("Name of the project to move the task to. Ignored if projectId is provided.")
 }).strict().refine(
   (data) => data.taskId || data.taskName,
   { message: "Either taskId or taskName must be provided" }
@@ -2730,6 +2736,8 @@ Args:
   - plannedDate (string | null, optional): New planned date in ISO 8601 format. Pass null to clear.
   - flagged (boolean, optional): Set flagged state
   - estimatedMinutes (number, optional): Time estimate in minutes. Pass 0 to clear.
+  - projectId (string, optional): ID of the project to move the task to.
+  - projectName (string, optional): Name of the project to move the task to. Ignored if projectId is provided.
 
 Returns:
   The updated task object
@@ -2748,7 +2756,7 @@ Examples:
     }
   },
   async (params) => {
-    const { taskId, taskName, name, note, dueDate, deferDate, plannedDate, flagged, estimatedMinutes } = params;
+    const { taskId, taskName, name, note, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, projectId, projectName } = params;
 
     const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
     const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
@@ -2796,7 +2804,24 @@ Examples:
         : `task.estimatedMinutes = ${estimatedMinutes};`);
     }
 
-    if (updateLines.length === 0) {
+    let moveToProjectScript = "";
+    if (projectId !== undefined || projectName !== undefined) {
+      const safeProjectId = projectId ? sanitizeInput(projectId, 100) : null;
+      const safeProjectName = projectName ? sanitizeInput(projectName, 500) : null;
+      if (safeProjectId) {
+        moveToProjectScript = `
+      var targetProject = doc.flattenedProjects().find(function(p) { return p.id() === "${safeProjectId}"; });
+      if (!targetProject) { throw new Error("Project not found with ID: ${safeProjectId}"); }
+      app.move(task, { to: targetProject.tasks });`;
+      } else if (safeProjectName) {
+        moveToProjectScript = `
+      var targetProject = doc.flattenedProjects().find(function(p) { return p.name() === "${safeProjectName}"; });
+      if (!targetProject) { throw new Error("Project not found: ${safeProjectName}"); }
+      app.move(task, { to: targetProject.tasks });`;
+      }
+    }
+
+    if (updateLines.length === 0 && moveToProjectScript === "") {
       return {
         isError: true,
         content: [{ type: "text", text: "No fields to update were provided" }]
@@ -2807,6 +2832,7 @@ Examples:
       ${TASK_MAPPER}
       ${findTaskScript}
       ${updateLines.join("\n      ")}
+      ${moveToProjectScript}
       JSON.stringify(mapTask(task));
     `;
 
