@@ -2812,12 +2812,12 @@ Examples:
         moveToProjectScript = `
       var targetProject = doc.flattenedProjects().find(function(p) { return p.id() === "${safeProjectId}"; });
       if (!targetProject) { throw new Error("Project not found with ID: ${safeProjectId}"); }
-      app.move(task, { to: targetProject.tasks });`;
+      task.assignedContainer = targetProject;`;
       } else if (safeProjectName) {
         moveToProjectScript = `
       var targetProject = doc.flattenedProjects().find(function(p) { return p.name() === "${safeProjectName}"; });
       if (!targetProject) { throw new Error("Project not found: ${safeProjectName}"); }
-      app.move(task, { to: targetProject.tasks });`;
+      task.assignedContainer = targetProject;`;
       }
     }
 
