@@ -1082,10 +1082,7 @@ const CompleteTaskInputSchema = z.object({
   action: z.enum(["complete", "drop"])
     .default("complete")
     .describe("Action to perform: 'complete' marks the task done, 'drop' marks it as dropped/cancelled")
-}).strict().refine(
-  (data) => data.taskId || data.taskName,
-  { message: "Either taskId or taskName must be provided" }
-);
+}).strict();
 
 server.registerTool(
   "omnifocus_complete_task",
@@ -1360,10 +1357,7 @@ const UpdateTaskNoteInputSchema = z.object({
   append: z.boolean()
     .default(false)
     .describe("If true, append to existing note instead of replacing it")
-}).strict().refine(
-  (data) => data.taskId || data.taskName,
-  { message: "Either taskId or taskName must be provided" }
-);
+}).strict();
 
 server.registerTool(
   "omnifocus_update_task_note",
@@ -1458,10 +1452,7 @@ const UpdateProjectNoteInputSchema = z.object({
   append: z.boolean()
     .default(false)
     .describe("If true, append to existing note instead of replacing it")
-}).strict().refine(
-  (data) => data.projectId || data.projectName,
-  { message: "Either projectId or projectName must be provided" }
-);
+}).strict();
 
 server.registerTool(
   "omnifocus_update_project_note",
@@ -2113,10 +2104,7 @@ const MarkProjectReviewedInputSchema = z.object({
     .max(3650)
     .optional()
     .describe("Number of days until next review (optional - uses project's current interval if not specified)")
-}).strict().refine(
-  (data) => data.projectId || data.projectName,
-  { message: "Either projectId or projectName must be provided" }
-);
+}).strict();
 
 server.registerTool(
   "omnifocus_mark_project_reviewed",
@@ -2717,10 +2705,7 @@ const UpdateTaskInputSchema = z.object({
   projectName: z.string()
     .optional()
     .describe("Name of the project to move the task to. Ignored if projectId is provided.")
-}).strict().refine(
-  (data) => data.taskId || data.taskName,
-  { message: "Either taskId or taskName must be provided" }
-);
+}).strict();
 
 server.registerTool(
   "omnifocus_update_task",
@@ -2868,10 +2853,7 @@ const DeleteTaskInputSchema = z.object({
   taskName: z.string()
     .optional()
     .describe("The task name to search for. At least one of taskId or taskName is required.")
-}).strict().refine(
-  (data) => data.taskId || data.taskName,
-  { message: "Either taskId or taskName must be provided" }
-);
+}).strict();
 
 server.registerTool(
   "omnifocus_delete_task",
