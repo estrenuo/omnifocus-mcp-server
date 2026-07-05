@@ -75,10 +75,37 @@ Add to your Claude Desktop configuration file (`~/Library/Application Support/Cl
 
 ### Other MCP Clients
 
-The server uses stdio transport, so configure your client to spawn:
+The server uses stdio transport by default, so configure your client to spawn:
 ```
 node /path/to/omnifocus-mcp-server/dist/index.js
 ```
+
+### Remote access (HTTP transport)
+
+For remote clients — most importantly claude.ai custom connectors, which is how the Claude iOS app reaches MCP servers — the server can run as a Streamable HTTP endpoint:
+
+```bash
+MCP_TRANSPORT=http \
+MCP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+node /path/to/omnifocus-mcp-server/dist/index.js
+```
+
+Environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_TRANSPORT` | `stdio` | Set to `http` to enable the HTTP transport |
+| `MCP_HTTP_PORT` | `3000` | Port to listen on |
+| `MCP_HTTP_HOST` | `127.0.0.1` | Bind address (keep loopback; expose via a tunnel) |
+| `MCP_AUTH_TOKEN` | — | Required shared secret; the server refuses to start without it |
+
+The MCP endpoint is `/mcp`. Authentication accepts either an `Authorization: Bearer <token>` header, or the token as a path segment (`/mcp/<token>`) for clients that cannot send custom headers. `GET /health` is unauthenticated.
+
+**Reaching it from claude.ai / the iOS app.** Custom connectors connect from Anthropic's cloud (not from your device), so the endpoint must be publicly reachable over HTTPS. The recommended setup is a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/): `cloudflared` runs on the Mac and makes an *outbound* connection, so no ports are opened. Since claude.ai does not support static bearer tokens or `?token=` query parameters for custom connectors, use the path-token form as the connector URL: `https://your-tunnel-host/mcp/<token>`. Optionally restrict access to Anthropic's outbound IP range (`160.79.104.0/21`) in a Cloudflare WAF rule. Tailscale alone does not work for this: Anthropic's cloud cannot reach your tailnet.
+
+The Mac must stay awake with OmniFocus running (`caffeinate -s` or Amphetamine).
+
+**Session semantics.** The HTTP transport serves one session at a time: a new `initialize` replaces the previous session. Every tool call is stateless, and spec-compliant clients transparently re-initialize when they receive 404 for a replaced session, so concurrent conversations degrade to extra round trips rather than failures.
 
 ## Permissions
 
