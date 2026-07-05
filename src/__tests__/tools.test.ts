@@ -1185,3 +1185,60 @@ describe('omnifocus_batch_remove_tag', () => {
     expect(text).toContain('Tag "Waiting" removed from 2 task(s)');
   });
 });
+
+describe('multi-tag filtering (tags + tagMatchMode)', () => {
+  it('should not add a tag filter when tags is omitted', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask()]);
+
+    await client.callTool({ name: 'omnifocus_list_inbox', arguments: {} });
+    const script = getCapturedScript();
+
+    expect(script).not.toContain('var wanted =');
+  });
+
+  it('should filter with ALL mode by default (every tag)', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask({ tags: ['Work', 'Urgent'] })]);
+
+    await client.callTool({ name: 'omnifocus_list_inbox', arguments: { tags: ['Work', 'Urgent'] } });
+    const script = getCapturedScript();
+
+    expect(script).toContain('var wanted = ["Work","Urgent"]');
+    expect(script).toContain('matched.length === wanted.length');
+  });
+
+  it('should filter with ANY mode (at least one tag)', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask({ tags: ['Work'] })]);
+
+    await client.callTool({ name: 'omnifocus_get_flagged_tasks', arguments: { tags: ['Work', 'Home'], tagMatchMode: 'any' } });
+    const script = getCapturedScript();
+
+    expect(script).toContain('var wanted = ["Work","Home"]');
+    expect(script).toContain('matched.length > 0');
+  });
+
+  it('should filter with NONE mode (excludes tags)', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask()]);
+
+    await client.callTool({ name: 'omnifocus_get_due_tasks', arguments: { tags: ['Someday'], tagMatchMode: 'none' } });
+    const script = getCapturedScript();
+
+    expect(script).toContain('var wanted = ["Someday"]');
+    expect(script).toContain('matched.length === 0');
+  });
+
+  it('should apply the tag filter on planned tasks too', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask({ plannedDate: '2027-01-01T09:00:00.000Z' })]);
+
+    await client.callTool({ name: 'omnifocus_get_planned_tasks', arguments: { tags: ['Focus'] } });
+    const script = getCapturedScript();
+
+    expect(script).toContain('var wanted = ["Focus"]');
+  });
+
+  it('should sanitize tag names in the filter', async () => {
+    const result = await client.callTool({ name: 'omnifocus_list_inbox', arguments: { tags: ['${evil}'] } });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('template literal injection');
+  });
+});

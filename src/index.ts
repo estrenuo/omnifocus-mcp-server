@@ -258,6 +258,27 @@ export function generateFindFolderScript(safeFolderId: string | null, safeFolder
   `;
 }
 
+/**
+ * Generates a JXA statement that filters an existing `tasks` array by tag names.
+ * mode: "all" (has every tag), "any" (has at least one), "none" (has none).
+ * Returns an empty string when no tags are supplied.
+ */
+export function generateTagFilter(safeTags: string[], mode: "all" | "any" | "none"): string {
+  if (!safeTags || safeTags.length === 0) return "";
+  const tagsJson = JSON.stringify(safeTags);
+  const condition =
+    mode === "any" ? "matched.length > 0" :
+    mode === "none" ? "matched.length === 0" :
+    "matched.length === wanted.length";
+  return `
+      var wanted = ${tagsJson};
+      tasks = tasks.filter(function(t) {
+        var names = t.tags().map(function(tg) { return tg.name(); });
+        var matched = wanted.filter(function(w) { return names.indexOf(w) !== -1; });
+        return ${condition};
+      });`;
+}
+
 // ============================================================================
 // Helper Scripts (JXA syntax - properties are accessed as methods)
 // ============================================================================
@@ -430,6 +451,17 @@ export const server = new McpServer({
 // Tool: List Inbox Tasks
 // ============================================================================
 
+// Shared tag-filter fields, spread into task-returning tool schemas.
+const tagFilterFields = {
+  tags: z.array(z.string())
+    .max(20)
+    .optional()
+    .describe("Filter to tasks matching these tag names (combined per tagMatchMode)"),
+  tagMatchMode: z.enum(["all", "any", "none"])
+    .default("all")
+    .describe("How to match tags: 'all' = task has every listed tag, 'any' = at least one, 'none' = none of them. Only applied when tags is provided.")
+};
+
 const ListInboxInputSchema = z.object({
   includeCompleted: z.boolean()
     .default(false)
@@ -439,7 +471,8 @@ const ListInboxInputSchema = z.object({
     .min(1)
     .max(500)
     .default(50)
-    .describe("Maximum number of tasks to return")
+    .describe("Maximum number of tasks to return"),
+  ...tagFilterFields
 }).strict();
 
 server.registerTool(
@@ -469,12 +502,15 @@ Examples:
     }
   },
   async (params) => {
-    const { includeCompleted, limit } = params;
-    
+    const { includeCompleted, limit, tags, tagMatchMode } = params;
+
+    const tagFilter = tags ? generateTagFilter(sanitizeArray(tags, 200, 20), tagMatchMode) : "";
+
     const script = `
       ${TASK_MAPPER}
       var tasks = doc.inboxTasks().slice(0, ${limit});
       ${!includeCompleted ? 'tasks = tasks.filter(function(t) { return !t.completed(); });' : ''}
+      ${tagFilter}
       JSON.stringify(tasks.map(mapTask));
     `;
     
@@ -1740,7 +1776,8 @@ const GetDueTasksInputSchema = z.object({
     .min(1)
     .max(500)
     .default(50)
-    .describe("Maximum tasks to return")
+    .describe("Maximum tasks to return"),
+  ...tagFilterFields
 }).strict();
 
 server.registerTool(
@@ -1770,8 +1807,10 @@ Examples:
     }
   },
   async (params) => {
-    const { daysAhead, includeOverdue, limit } = params;
-    
+    const { daysAhead, includeOverdue, limit, tags, tagMatchMode } = params;
+
+    const tagFilter = tags ? generateTagFilter(sanitizeArray(tags, 200, 20), tagMatchMode) : "";
+
     const script = `
       ${TASK_MAPPER}
       var now = new Date();
@@ -1788,6 +1827,7 @@ Examples:
       }).sort(function(a, b) {
         return a.dueDate() - b.dueDate();
       }).slice(0, ${limit});
+      ${tagFilter}
 
       JSON.stringify(tasks.map(mapTask));
     `;
@@ -1832,7 +1872,8 @@ const GetFlaggedTasksInputSchema = z.object({
     .min(1)
     .max(500)
     .default(50)
-    .describe("Maximum tasks to return")
+    .describe("Maximum tasks to return"),
+  ...tagFilterFields
 }).strict();
 
 server.registerTool(
@@ -1860,8 +1901,10 @@ Examples:
     }
   },
   async (params) => {
-    const { includeCompleted, limit } = params;
-    
+    const { includeCompleted, limit, tags, tagMatchMode } = params;
+
+    const tagFilter = tags ? generateTagFilter(sanitizeArray(tags, 200, 20), tagMatchMode) : "";
+
     const script = `
       ${TASK_MAPPER}
       var tasks = doc.flattenedTasks().filter(function(t) {
@@ -1869,6 +1912,7 @@ Examples:
         ${!includeCompleted ? 'if (t.completed()) return false;' : ''}
         return true;
       }).slice(0, ${limit});
+      ${tagFilter}
       JSON.stringify(tasks.map(mapTask));
     `;
     
@@ -1917,7 +1961,8 @@ const GetPlannedTasksInputSchema = z.object({
     .min(1)
     .max(500)
     .default(50)
-    .describe("Maximum tasks to return")
+    .describe("Maximum tasks to return"),
+  ...tagFilterFields
 }).strict();
 
 server.registerTool(
@@ -1949,7 +1994,9 @@ Examples:
     }
   },
   async (params) => {
-    const { daysAhead, includeOverdue, limit } = params;
+    const { daysAhead, includeOverdue, limit, tags, tagMatchMode } = params;
+
+    const tagFilter = tags ? generateTagFilter(sanitizeArray(tags, 200, 20), tagMatchMode) : "";
 
     const script = `
       ${TASK_MAPPER}
@@ -1977,6 +2024,7 @@ Examples:
         if (!aPlanned || !bPlanned) return 0;
         return aPlanned - bPlanned;
       }).slice(0, ${limit});
+      ${tagFilter}
 
       JSON.stringify(tasks.map(mapTask));
     `;
