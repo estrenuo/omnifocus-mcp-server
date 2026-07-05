@@ -2219,7 +2219,7 @@ Examples:
     if (reviewIntervalDays) {
       // Set custom review interval
       reviewScript = `
-        project.reviewInterval = ${reviewIntervalDays} * 24 * 60 * 60; // Convert days to seconds
+        project.reviewInterval = {unit: "day", steps: ${reviewIntervalDays}}; // record form; raw seconds segfaults osascript
         project.markReviewed();
       `;
     } else {
@@ -2305,7 +2305,7 @@ Examples:
     let reviewScript: string;
     if (reviewIntervalDays) {
       reviewScript = `
-        project.reviewInterval = ${reviewIntervalDays} * 24 * 60 * 60; // Convert days to seconds
+        project.reviewInterval = {unit: "day", steps: ${reviewIntervalDays}}; // record form; raw seconds segfaults osascript
         project.markReviewed();
       `;
     } else {
