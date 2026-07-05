@@ -224,6 +224,61 @@ export function generateFindTaskScript(safeTaskId: string | null, safeTaskName: 
   `;
 }
 
+/**
+ * Generates JXA script to find a project by ID or exact name.
+ * Used by omnifocus_update_project and omnifocus_delete_project.
+ */
+export function generateFindProjectScript(safeProjectId: string | null, safeProjectName: string | null): string {
+  if (safeProjectId) {
+    return `
+      var project = doc.flattenedProjects().find(function(p) { return p.id() === "${safeProjectId}"; });
+      if (!project) { throw new Error("Project not found with ID: ${safeProjectId}"); }
+    `;
+  }
+  return `
+    var project = doc.flattenedProjects().find(function(p) { return p.name() === "${safeProjectName}"; });
+    if (!project) { throw new Error("Project not found: ${safeProjectName}"); }
+  `;
+}
+
+/**
+ * Generates JXA script to find a folder by ID or exact name.
+ * Used by omnifocus_update_folder and omnifocus_delete_folder.
+ */
+export function generateFindFolderScript(safeFolderId: string | null, safeFolderName: string | null): string {
+  if (safeFolderId) {
+    return `
+      var folder = doc.flattenedFolders().find(function(f) { return f.id() === "${safeFolderId}"; });
+      if (!folder) { throw new Error("Folder not found with ID: ${safeFolderId}"); }
+    `;
+  }
+  return `
+    var folder = doc.flattenedFolders().find(function(f) { return f.name() === "${safeFolderName}"; });
+    if (!folder) { throw new Error("Folder not found: ${safeFolderName}"); }
+  `;
+}
+
+/**
+ * Generates a JXA statement that filters an existing `tasks` array by tag names.
+ * mode: "all" (has every tag), "any" (has at least one), "none" (has none).
+ * Returns an empty string when no tags are supplied.
+ */
+export function generateTagFilter(safeTags: string[], mode: "all" | "any" | "none"): string {
+  if (!safeTags || safeTags.length === 0) return "";
+  const tagsJson = JSON.stringify(safeTags);
+  const condition =
+    mode === "any" ? "matched.length > 0" :
+    mode === "none" ? "matched.length === 0" :
+    "matched.length === wanted.length";
+  return `
+      var wanted = ${tagsJson};
+      tasks = tasks.filter(function(t) {
+        var names = t.tags().map(function(tg) { return tg.name(); });
+        var matched = wanted.filter(function(w) { return names.indexOf(w) !== -1; });
+        return ${condition};
+      });`;
+}
+
 // ============================================================================
 // Helper Scripts (JXA syntax - properties are accessed as methods)
 // ============================================================================
@@ -396,6 +451,17 @@ export const server = new McpServer({
 // Tool: List Inbox Tasks
 // ============================================================================
 
+// Shared tag-filter fields, spread into task-returning tool schemas.
+const tagFilterFields = {
+  tags: z.array(z.string())
+    .max(20)
+    .optional()
+    .describe("Filter to tasks matching these tag names (combined per tagMatchMode)"),
+  tagMatchMode: z.enum(["all", "any", "none"])
+    .default("all")
+    .describe("How to match tags: 'all' = task has every listed tag, 'any' = at least one, 'none' = none of them. Only applied when tags is provided.")
+};
+
 const ListInboxInputSchema = z.object({
   includeCompleted: z.boolean()
     .default(false)
@@ -405,7 +471,8 @@ const ListInboxInputSchema = z.object({
     .min(1)
     .max(500)
     .default(50)
-    .describe("Maximum number of tasks to return")
+    .describe("Maximum number of tasks to return"),
+  ...tagFilterFields
 }).strict();
 
 server.registerTool(
@@ -435,12 +502,16 @@ Examples:
     }
   },
   async (params) => {
-    const { includeCompleted, limit } = params;
-    
+    const { includeCompleted, limit, tags, tagMatchMode } = params;
+
+    const tagFilter = tags ? generateTagFilter(sanitizeArray(tags, 200, 20), tagMatchMode) : "";
+
     const script = `
       ${TASK_MAPPER}
-      var tasks = doc.inboxTasks().slice(0, ${limit});
+      var tasks = doc.inboxTasks();
       ${!includeCompleted ? 'tasks = tasks.filter(function(t) { return !t.completed(); });' : ''}
+      ${tagFilter}
+      tasks = tasks.slice(0, ${limit});
       JSON.stringify(tasks.map(mapTask));
     `;
     
@@ -1706,7 +1777,8 @@ const GetDueTasksInputSchema = z.object({
     .min(1)
     .max(500)
     .default(50)
-    .describe("Maximum tasks to return")
+    .describe("Maximum tasks to return"),
+  ...tagFilterFields
 }).strict();
 
 server.registerTool(
@@ -1736,8 +1808,10 @@ Examples:
     }
   },
   async (params) => {
-    const { daysAhead, includeOverdue, limit } = params;
-    
+    const { daysAhead, includeOverdue, limit, tags, tagMatchMode } = params;
+
+    const tagFilter = tags ? generateTagFilter(sanitizeArray(tags, 200, 20), tagMatchMode) : "";
+
     const script = `
       ${TASK_MAPPER}
       var now = new Date();
@@ -1753,7 +1827,9 @@ Examples:
         return due <= futureDate;
       }).sort(function(a, b) {
         return a.dueDate() - b.dueDate();
-      }).slice(0, ${limit});
+      });
+      ${tagFilter}
+      tasks = tasks.slice(0, ${limit});
 
       JSON.stringify(tasks.map(mapTask));
     `;
@@ -1798,7 +1874,8 @@ const GetFlaggedTasksInputSchema = z.object({
     .min(1)
     .max(500)
     .default(50)
-    .describe("Maximum tasks to return")
+    .describe("Maximum tasks to return"),
+  ...tagFilterFields
 }).strict();
 
 server.registerTool(
@@ -1826,15 +1903,19 @@ Examples:
     }
   },
   async (params) => {
-    const { includeCompleted, limit } = params;
-    
+    const { includeCompleted, limit, tags, tagMatchMode } = params;
+
+    const tagFilter = tags ? generateTagFilter(sanitizeArray(tags, 200, 20), tagMatchMode) : "";
+
     const script = `
       ${TASK_MAPPER}
       var tasks = doc.flattenedTasks().filter(function(t) {
         if (!t.flagged()) return false;
         ${!includeCompleted ? 'if (t.completed()) return false;' : ''}
         return true;
-      }).slice(0, ${limit});
+      });
+      ${tagFilter}
+      tasks = tasks.slice(0, ${limit});
       JSON.stringify(tasks.map(mapTask));
     `;
     
@@ -1883,7 +1964,8 @@ const GetPlannedTasksInputSchema = z.object({
     .min(1)
     .max(500)
     .default(50)
-    .describe("Maximum tasks to return")
+    .describe("Maximum tasks to return"),
+  ...tagFilterFields
 }).strict();
 
 server.registerTool(
@@ -1915,7 +1997,9 @@ Examples:
     }
   },
   async (params) => {
-    const { daysAhead, includeOverdue, limit } = params;
+    const { daysAhead, includeOverdue, limit, tags, tagMatchMode } = params;
+
+    const tagFilter = tags ? generateTagFilter(sanitizeArray(tags, 200, 20), tagMatchMode) : "";
 
     const script = `
       ${TASK_MAPPER}
@@ -1942,7 +2026,9 @@ Examples:
         } catch(e) {}
         if (!aPlanned || !bPlanned) return 0;
         return aPlanned - bPlanned;
-      }).slice(0, ${limit});
+      });
+      ${tagFilter}
+      tasks = tasks.slice(0, ${limit});
 
       JSON.stringify(tasks.map(mapTask));
     `;
@@ -2185,7 +2271,7 @@ Examples:
     if (reviewIntervalDays) {
       // Set custom review interval
       reviewScript = `
-        project.reviewInterval = ${reviewIntervalDays} * 24 * 60 * 60; // Convert days to seconds
+        project.reviewInterval = {unit: "day", steps: ${reviewIntervalDays}}; // record form; raw seconds segfaults osascript
         project.markReviewed();
       `;
     } else {
@@ -2271,7 +2357,7 @@ Examples:
     let reviewScript: string;
     if (reviewIntervalDays) {
       reviewScript = `
-        project.reviewInterval = ${reviewIntervalDays} * 24 * 60 * 60; // Convert days to seconds
+        project.reviewInterval = {unit: "day", steps: ${reviewIntervalDays}}; // record form; raw seconds segfaults osascript
         project.markReviewed();
       `;
     } else {
@@ -2915,6 +3001,799 @@ Examples:
       return {
         isError: true,
         content: [{ type: "text", text: `Error deleting task: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Batch Complete/Drop Tasks
+// ============================================================================
+
+const BatchCompleteTaskInputSchema = z.object({
+  taskIds: z.array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Array of task IDs to complete or drop (1-100 tasks)"),
+  action: z.enum(["complete", "drop"])
+    .default("complete")
+    .describe("'complete' (default) or 'drop'")
+}).strict();
+
+server.registerTool(
+  "omnifocus_batch_complete_task",
+  {
+    title: "Batch Complete/Drop Tasks",
+    description: `Complete or drop multiple tasks in one operation.
+
+Args:
+  - taskIds (array): Array of task IDs to complete or drop (1-100)
+  - action (string): 'complete' (default) or 'drop'
+
+Returns:
+  Summary with counts and the updated tasks, plus any per-task failures
+
+Examples:
+  - Complete several: { taskIds: ["id1", "id2", "id3"] }
+  - Drop several: { taskIds: ["id1", "id2"], action: "drop" }`,
+    inputSchema: BatchCompleteTaskInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskIds, action } = params;
+
+    const safeTaskIds = sanitizeArray(taskIds, 100, 100);
+    const taskIdsJson = JSON.stringify(safeTaskIds);
+    const actionCode = action === "drop" ? "task.markDropped();" : "task.markComplete();";
+
+    const script = `
+      ${TASK_MAPPER}
+      var targetIds = ${taskIdsJson};
+      var allTasks = doc.flattenedTasks();
+      var results = { successful: [], failed: [] };
+
+      targetIds.forEach(function(taskId) {
+        try {
+          var task = allTasks.find(function(t) { return t.id() === taskId; });
+          if (!task) {
+            results.failed.push({ taskId: taskId, error: "Task not found" });
+            return;
+          }
+          ${actionCode}
+          results.successful.push(mapTask(task));
+        } catch (e) {
+          results.failed.push({ taskId: taskId, error: String(e) });
+        }
+      });
+
+      JSON.stringify(results);
+    `;
+
+    try {
+      const results = await executeAndParseJSON<{
+        successful: TaskData[];
+        failed: Array<{ taskId: string; error: string }>;
+      }>(script);
+
+      const actionVerb = action === "drop" ? "dropped" : "completed";
+      const output = {
+        totalRequested: taskIds.length,
+        successCount: results.successful.length,
+        failureCount: results.failed.length,
+        tasks: results.successful,
+        failures: results.failed
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: `${results.successful.length} task(s) ${actionVerb}${results.failed.length > 0 ? ` (${results.failed.length} failed)` : ""}:\n${JSON.stringify(output, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error in batch complete: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Batch Add Tag to Tasks
+// ============================================================================
+
+const BatchAddTagInputSchema = z.object({
+  taskIds: z.array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Array of task IDs to add the tag to (1-100 tasks)"),
+  tagName: z.string()
+    .describe("Name of the tag to add (must already exist)")
+}).strict();
+
+server.registerTool(
+  "omnifocus_batch_add_tag",
+  {
+    title: "Batch Add Tag to Tasks",
+    description: `Add the same tag to multiple tasks in one operation.
+
+The tag must already exist. Tasks that already have the tag are left unchanged.
+
+Args:
+  - taskIds (array): Array of task IDs to tag (1-100)
+  - tagName (string): Name of the tag to add
+
+Returns:
+  Summary with counts and the updated tasks, plus any per-task failures
+
+Examples:
+  - Tag several tasks: { taskIds: ["id1", "id2"], tagName: "Urgent" }`,
+    inputSchema: BatchAddTagInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskIds, tagName } = params;
+
+    const safeTaskIds = sanitizeArray(taskIds, 100, 100);
+    const taskIdsJson = JSON.stringify(safeTaskIds);
+    const safeTagName = sanitizeInput(tagName, 200);
+
+    const script = `
+      ${TASK_MAPPER}
+      var tag = doc.flattenedTags().find(function(t) { return t.name() === "${safeTagName}"; });
+      if (!tag) { throw new Error("Tag not found: ${safeTagName}"); }
+
+      var targetIds = ${taskIdsJson};
+      var allTasks = doc.flattenedTasks();
+      var results = { successful: [], failed: [] };
+
+      targetIds.forEach(function(taskId) {
+        try {
+          var task = allTasks.find(function(t) { return t.id() === taskId; });
+          if (!task) {
+            results.failed.push({ taskId: taskId, error: "Task not found" });
+            return;
+          }
+          var existingTag = task.tags().find(function(t) { return t.name() === "${safeTagName}"; });
+          if (!existingTag) {
+            app.add(tag, { to: task.tags });
+          }
+          results.successful.push(mapTask(task));
+        } catch (e) {
+          results.failed.push({ taskId: taskId, error: String(e) });
+        }
+      });
+
+      JSON.stringify(results);
+    `;
+
+    try {
+      const results = await executeAndParseJSON<{
+        successful: TaskData[];
+        failed: Array<{ taskId: string; error: string }>;
+      }>(script);
+
+      const output = {
+        totalRequested: taskIds.length,
+        successCount: results.successful.length,
+        failureCount: results.failed.length,
+        tasks: results.successful,
+        failures: results.failed
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: `Tag "${tagName}" added to ${results.successful.length} task(s)${results.failed.length > 0 ? ` (${results.failed.length} failed)` : ""}:\n${JSON.stringify(output, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error in batch add tag: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Batch Remove Tag from Tasks
+// ============================================================================
+
+const BatchRemoveTagInputSchema = z.object({
+  taskIds: z.array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Array of task IDs to remove the tag from (1-100 tasks)"),
+  tagName: z.string()
+    .describe("Name of the tag to remove")
+}).strict();
+
+server.registerTool(
+  "omnifocus_batch_remove_tag",
+  {
+    title: "Batch Remove Tag from Tasks",
+    description: `Remove the same tag from multiple tasks in one operation.
+
+Tasks that do not have the tag are left unchanged.
+
+Args:
+  - taskIds (array): Array of task IDs to untag (1-100)
+  - tagName (string): Name of the tag to remove
+
+Returns:
+  Summary with counts and the updated tasks, plus any per-task failures
+
+Examples:
+  - Untag several tasks: { taskIds: ["id1", "id2"], tagName: "Waiting" }`,
+    inputSchema: BatchRemoveTagInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskIds, tagName } = params;
+
+    const safeTaskIds = sanitizeArray(taskIds, 100, 100);
+    const taskIdsJson = JSON.stringify(safeTaskIds);
+    const safeTagName = sanitizeInput(tagName, 200);
+
+    const script = `
+      ${TASK_MAPPER}
+      var targetIds = ${taskIdsJson};
+      var allTasks = doc.flattenedTasks();
+      var results = { successful: [], failed: [] };
+
+      targetIds.forEach(function(taskId) {
+        try {
+          var task = allTasks.find(function(t) { return t.id() === taskId; });
+          if (!task) {
+            results.failed.push({ taskId: taskId, error: "Task not found" });
+            return;
+          }
+          var tagOnTask = task.tags().find(function(t) { return t.name() === "${safeTagName}"; });
+          if (tagOnTask) {
+            app.remove(tagOnTask, { from: task.tags });
+          }
+          results.successful.push(mapTask(task));
+        } catch (e) {
+          results.failed.push({ taskId: taskId, error: String(e) });
+        }
+      });
+
+      JSON.stringify(results);
+    `;
+
+    try {
+      const results = await executeAndParseJSON<{
+        successful: TaskData[];
+        failed: Array<{ taskId: string; error: string }>;
+      }>(script);
+
+      const output = {
+        totalRequested: taskIds.length,
+        successCount: results.successful.length,
+        failureCount: results.failed.length,
+        tasks: results.successful,
+        failures: results.failed
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: `Tag "${tagName}" removed from ${results.successful.length} task(s)${results.failed.length > 0 ? ` (${results.failed.length} failed)` : ""}:\n${JSON.stringify(output, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error in batch remove tag: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Update Project
+// ============================================================================
+
+const UpdateProjectInputSchema = z.object({
+  projectId: z.string()
+    .optional()
+    .describe("The project ID to update. Takes priority if both projectId and projectName are provided."),
+  projectName: z.string()
+    .optional()
+    .describe("The project name to search for. At least one of projectId or projectName is required."),
+  name: z.string()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("New project name"),
+  note: z.string()
+    .max(10000)
+    .nullable()
+    .optional()
+    .describe("New note text. Pass null to clear the note."),
+  status: z.enum(["active", "on hold", "done", "dropped"])
+    .optional()
+    .describe("New project status"),
+  flagged: z.boolean()
+    .optional()
+    .describe("Set flagged state"),
+  dueDate: z.string()
+    .nullable()
+    .optional()
+    .describe("New due date in ISO 8601 format. Pass null to clear."),
+  deferDate: z.string()
+    .nullable()
+    .optional()
+    .describe("New defer/start date in ISO 8601 format. Pass null to clear."),
+  sequential: z.boolean()
+    .optional()
+    .describe("If true, tasks must be completed in order (sequential). If false, parallel."),
+  reviewIntervalDays: z.number()
+    .int()
+    .min(1)
+    .max(3650)
+    .optional()
+    .describe("Review interval in days.")
+}).strict();
+
+server.registerTool(
+  "omnifocus_update_project",
+  {
+    title: "Update Project",
+    description: `Update properties of an existing project in OmniFocus.
+
+Only the fields you provide are changed. Use null to clear a date or note field.
+
+Args:
+  - projectId (string, optional): The project's ID. Takes priority if both projectId and projectName provided.
+  - projectName (string, optional): The project's name to search for. At least one of projectId or projectName is required.
+  - name (string, optional): New project name
+  - note (string | null, optional): New note text. Pass null to clear.
+  - status (string, optional): "active", "on hold", "done", or "dropped"
+  - flagged (boolean, optional): Set flagged state
+  - dueDate (string | null, optional): New due date in ISO 8601 format. Pass null to clear.
+  - deferDate (string | null, optional): New defer date in ISO 8601 format. Pass null to clear.
+  - sequential (boolean, optional): Tasks must be done in order (true) or parallel (false)
+  - reviewIntervalDays (number, optional): Review interval in days (1-3650)
+
+Note: moving a project between folders is not supported by OmniFocus's JXA layer (the move operation returns "Replacement not supported"). Recreate the project in the target folder if you need to move it.
+
+Returns:
+  The updated project object
+
+Examples:
+  - Rename: { projectId: "abc123", name: "New name" }
+  - Put on hold: { projectId: "abc123", status: "on hold" }
+  - Set review interval: { projectId: "abc123", reviewIntervalDays: 14 }
+  - Clear due date: { projectId: "abc123", dueDate: null }`,
+    inputSchema: UpdateProjectInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { projectId, projectName, name, note, status, flagged, dueDate, deferDate, sequential, reviewIntervalDays } = params;
+
+    const safeProjectId = projectId ? sanitizeInput(projectId, 100) : null;
+    const safeProjectName = projectName ? sanitizeInput(projectName, 500) : null;
+
+    if (!safeProjectId && !safeProjectName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either projectId or projectName must be provided" }]
+      };
+    }
+
+    const findProjectScript = generateFindProjectScript(safeProjectId, safeProjectName);
+
+    const statusMap: Record<string, string> = {
+      "active": "active status",
+      "on hold": "on hold status",
+      "done": "done status",
+      "dropped": "dropped status"
+    };
+
+    const updateLines: string[] = [];
+
+    if (name !== undefined) {
+      updateLines.push(`project.name = "${sanitizeInput(name, 500)}";`);
+    }
+    if (note !== undefined) {
+      const safeNote = note === null ? "" : sanitizeInput(note, 10000);
+      updateLines.push(`project.note = "${safeNote}";`);
+    }
+    if (status !== undefined) {
+      updateLines.push(`project.status = "${statusMap[status]}";`);
+    }
+    if (flagged !== undefined) {
+      updateLines.push(`project.flagged = ${flagged};`);
+    }
+    if (dueDate !== undefined) {
+      updateLines.push(dueDate === null
+        ? `project.dueDate = null;`
+        : `project.dueDate = new Date("${sanitizeInput(dueDate, 100)}");`);
+    }
+    if (deferDate !== undefined) {
+      updateLines.push(deferDate === null
+        ? `project.deferDate = null;`
+        : `project.deferDate = new Date("${sanitizeInput(deferDate, 100)}");`);
+    }
+    if (sequential !== undefined) {
+      updateLines.push(`project.sequential = ${sequential};`);
+    }
+    if (reviewIntervalDays !== undefined) {
+      // reviewInterval is a record {unit, steps} in OmniFocus JXA; assigning a
+      // raw number of seconds segfaults osascript.
+      updateLines.push(`project.reviewInterval = {unit: "day", steps: ${reviewIntervalDays}};`);
+    }
+
+    if (updateLines.length === 0) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "No fields to update were provided" }]
+      };
+    }
+
+    const script = `
+      ${PROJECT_MAPPER}
+      ${findProjectScript}
+      ${updateLines.join("\n      ")}
+      JSON.stringify(mapProject(project));
+    `;
+
+    try {
+      const project = await executeAndParseJSON<ProjectData>(script);
+      return {
+        content: [{
+          type: "text",
+          text: `Project updated:\n${JSON.stringify(project, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error updating project: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Delete Project
+// ============================================================================
+
+const DeleteProjectInputSchema = z.object({
+  projectId: z.string()
+    .optional()
+    .describe("The project ID to delete. Takes priority if both projectId and projectName are provided."),
+  projectName: z.string()
+    .optional()
+    .describe("The project name to search for. At least one of projectId or projectName is required.")
+}).strict();
+
+server.registerTool(
+  "omnifocus_delete_project",
+  {
+    title: "Delete Project",
+    description: `Permanently delete a project from OmniFocus, including its tasks. This cannot be undone via MCP.
+
+Use either the project ID from list/search results, or the project name.
+
+Args:
+  - projectId (string, optional): The project's ID. Takes priority if both projectId and projectName provided.
+  - projectName (string, optional): The project's name to search for. At least one of projectId or projectName is required.
+
+Returns:
+  Confirmation message with the deleted project's name
+
+Examples:
+  - Delete by ID: { projectId: "abc123" }
+  - Delete by name: { projectName: "Old project" }`,
+    inputSchema: DeleteProjectInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { projectId, projectName } = params;
+
+    const safeProjectId = projectId ? sanitizeInput(projectId, 100) : null;
+    const safeProjectName = projectName ? sanitizeInput(projectName, 500) : null;
+
+    if (!safeProjectId && !safeProjectName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either projectId or projectName must be provided" }]
+      };
+    }
+
+    const findProjectScript = generateFindProjectScript(safeProjectId, safeProjectName);
+
+    const script = `
+      ${findProjectScript}
+      var deletedName = project.name();
+      app.delete(project);
+      JSON.stringify({ deleted: true, name: deletedName });
+    `;
+
+    try {
+      const result = await executeAndParseJSON<{ deleted: boolean; name: string }>(script);
+      return {
+        content: [{
+          type: "text",
+          text: `Project deleted: "${result.name}"`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error deleting project: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Create Folder
+// ============================================================================
+
+const CreateFolderInputSchema = z.object({
+  name: z.string()
+    .min(1)
+    .max(500)
+    .describe("Folder name (required)"),
+  parentFolderName: z.string()
+    .max(500)
+    .optional()
+    .describe("Name of the parent folder to nest inside. If omitted, folder is created at the top level.")
+}).strict();
+
+server.registerTool(
+  "omnifocus_create_folder",
+  {
+    title: "Create Folder",
+    description: `Create a new folder in OmniFocus.
+
+Creates a folder at the top level or nested inside an existing folder.
+
+Args:
+  - name (string): Folder name (required)
+  - parentFolderName (string, optional): Parent folder to nest inside (top level if omitted)
+
+Returns:
+  The created folder object with id, name, and other properties
+
+Examples:
+  - Top-level folder: { name: "Work" }
+  - Nested folder: { name: "Q1", parentFolderName: "Work" }`,
+    inputSchema: CreateFolderInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { name, parentFolderName } = params;
+
+    const safeName = sanitizeInput(name, 500);
+    const safeParentName = parentFolderName ? sanitizeInput(parentFolderName, 500) : null;
+
+    const createScript = safeParentName
+      ? `
+        var parentFolder = doc.flattenedFolders().find(function(f) { return f.name() === "${safeParentName}"; });
+        if (!parentFolder) { throw new Error("Parent folder not found: ${safeParentName}"); }
+        var folder = app.Folder({name: "${safeName}"});
+        parentFolder.folders.push(folder);
+      `
+      : `
+        var folder = app.Folder({name: "${safeName}"});
+        doc.folders.push(folder);
+      `;
+
+    const script = `
+      ${FOLDER_MAPPER}
+      ${createScript}
+      JSON.stringify(mapFolder(folder));
+    `;
+
+    try {
+      const folder = await executeAndParseJSON<FolderData>(script);
+      return {
+        content: [{
+          type: "text",
+          text: `Folder created successfully:\n${JSON.stringify(folder, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error creating folder: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Update Folder
+// ============================================================================
+
+const UpdateFolderInputSchema = z.object({
+  folderId: z.string()
+    .optional()
+    .describe("The folder ID to update. Takes priority if both folderId and folderName are provided."),
+  folderName: z.string()
+    .optional()
+    .describe("The folder name to search for. At least one of folderId or folderName is required."),
+  name: z.string()
+    .min(1)
+    .max(500)
+    .describe("New folder name")
+}).strict();
+
+server.registerTool(
+  "omnifocus_update_folder",
+  {
+    title: "Update Folder",
+    description: `Rename an existing folder in OmniFocus.
+
+Args:
+  - folderId (string, optional): The folder's ID. Takes priority if both folderId and folderName provided.
+  - folderName (string, optional): The folder's name to search for. At least one of folderId or folderName is required.
+  - name (string): New folder name
+
+Note: moving a folder into another folder is not supported by OmniFocus's JXA layer (the move operation is rejected). Recreate the folder in the target location if you need to move it.
+
+Returns:
+  The updated folder object
+
+Examples:
+  - Rename by ID: { folderId: "abc123", name: "Archive" }
+  - Rename by name: { folderName: "Q1", name: "Q1 2027" }`,
+    inputSchema: UpdateFolderInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { folderId, folderName, name } = params;
+
+    const safeFolderId = folderId ? sanitizeInput(folderId, 100) : null;
+    const safeFolderName = folderName ? sanitizeInput(folderName, 500) : null;
+
+    if (!safeFolderId && !safeFolderName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either folderId or folderName must be provided" }]
+      };
+    }
+
+    const findFolderScript = generateFindFolderScript(safeFolderId, safeFolderName);
+
+    const script = `
+      ${FOLDER_MAPPER}
+      ${findFolderScript}
+      folder.name = "${sanitizeInput(name, 500)}";
+      JSON.stringify(mapFolder(folder));
+    `;
+
+    try {
+      const folder = await executeAndParseJSON<FolderData>(script);
+      return {
+        content: [{
+          type: "text",
+          text: `Folder updated:\n${JSON.stringify(folder, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error updating folder: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Delete Folder
+// ============================================================================
+
+const DeleteFolderInputSchema = z.object({
+  folderId: z.string()
+    .optional()
+    .describe("The folder ID to delete. Takes priority if both folderId and folderName are provided."),
+  folderName: z.string()
+    .optional()
+    .describe("The folder name to search for. At least one of folderId or folderName is required.")
+}).strict();
+
+server.registerTool(
+  "omnifocus_delete_folder",
+  {
+    title: "Delete Folder",
+    description: `Permanently delete a folder from OmniFocus, including any projects and folders it contains. This cannot be undone via MCP.
+
+Use either the folder ID from list/search results, or the folder name.
+
+Args:
+  - folderId (string, optional): The folder's ID. Takes priority if both folderId and folderName provided.
+  - folderName (string, optional): The folder's name to search for. At least one of folderId or folderName is required.
+
+Returns:
+  Confirmation message with the deleted folder's name
+
+Examples:
+  - Delete by ID: { folderId: "abc123" }
+  - Delete by name: { folderName: "Old folder" }`,
+    inputSchema: DeleteFolderInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { folderId, folderName } = params;
+
+    const safeFolderId = folderId ? sanitizeInput(folderId, 100) : null;
+    const safeFolderName = folderName ? sanitizeInput(folderName, 500) : null;
+
+    if (!safeFolderId && !safeFolderName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "Either folderId or folderName must be provided" }]
+      };
+    }
+
+    const findFolderScript = generateFindFolderScript(safeFolderId, safeFolderName);
+
+    const script = `
+      ${findFolderScript}
+      var deletedName = folder.name();
+      app.delete(folder);
+      JSON.stringify({ deleted: true, name: deletedName });
+    `;
+
+    try {
+      const result = await executeAndParseJSON<{ deleted: boolean; name: string }>(script);
+      return {
+        content: [{
+          type: "text",
+          text: `Folder deleted: "${result.name}"`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error deleting folder: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }
