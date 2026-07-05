@@ -94,8 +94,16 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Serve
   let transport: StreamableHTTPServerTransport | null = null;
 
   const httpServer = createServer(async (req, res) => {
+    let rpcMethod: string | undefined;
+    res.on("finish", () => {
+      const redactedPath = url ? url.pathname.replace(/^\/mcp\/[^/]+/, "/mcp/:token") : req.url;
+      console.error(
+        `${new Date().toISOString()} ${req.method} ${redactedPath}${rpcMethod ? ` [${rpcMethod}]` : ""} → ${res.statusCode}`
+      );
+    });
+    let url: URL | undefined;
     try {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const segments = url.pathname.split("/").filter(Boolean);
 
       if (req.method === "GET" && url.pathname === "/health") {
@@ -121,6 +129,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Serve
         } catch (error) {
           sendJson(res, 400, jsonRpcError(-32700, error instanceof Error ? error.message : "Parse error"));
           return;
+        }
+        if (body !== null && typeof body === "object" && "method" in body) {
+          rpcMethod = String((body as { method: unknown }).method);
         }
       }
 
