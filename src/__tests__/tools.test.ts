@@ -1071,3 +1071,117 @@ describe('omnifocus_delete_folder', () => {
     expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('Either folderId or folderName');
   });
 });
+
+describe('omnifocus_batch_complete_task', () => {
+  it('should complete multiple tasks by ID', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({
+      successful: [createMockTask({ id: 't1', completed: true }), createMockTask({ id: 't2', completed: true })],
+      failed: [],
+    });
+
+    const result = await client.callTool({
+      name: 'omnifocus_batch_complete_task',
+      arguments: { taskIds: ['t1', 't2'] },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('["t1","t2"]');
+    expect(script).toContain('task.markComplete()');
+    expect(script).not.toContain('task.markDropped()');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('2 task(s) completed');
+  });
+
+  it('should drop tasks when action is drop', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({ successful: [createMockTask({ dropped: true })], failed: [] });
+
+    await client.callTool({
+      name: 'omnifocus_batch_complete_task',
+      arguments: { taskIds: ['t1'], action: 'drop' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('task.markDropped()');
+    expect(script).not.toContain('task.markComplete()');
+  });
+
+  it('should report per-task failures', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({
+      successful: [createMockTask({ id: 't1', completed: true })],
+      failed: [{ taskId: 'bad', error: 'Task not found' }],
+    });
+
+    const result = await client.callTool({
+      name: 'omnifocus_batch_complete_task',
+      arguments: { taskIds: ['t1', 'bad'] },
+    });
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+
+    expect(text).toContain('"successCount": 1');
+    expect(text).toContain('"failureCount": 1');
+    expect(text).toContain('1 task(s) completed (1 failed)');
+  });
+
+  it('should reject an empty taskIds array', async () => {
+    const result = await client.callTool({ name: 'omnifocus_batch_complete_task', arguments: { taskIds: [] } });
+
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe('omnifocus_batch_add_tag', () => {
+  it('should add a tag to multiple tasks', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({
+      successful: [createMockTask({ id: 't1', tags: ['Urgent'] }), createMockTask({ id: 't2', tags: ['Urgent'] })],
+      failed: [],
+    });
+
+    const result = await client.callTool({
+      name: 'omnifocus_batch_add_tag',
+      arguments: { taskIds: ['t1', 't2'], tagName: 'Urgent' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('["t1","t2"]');
+    expect(script).toContain('doc.flattenedTags().find');
+    expect(script).toContain('Urgent');
+    expect(script).toContain('app.add(tag, { to: task.tags })');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Tag "Urgent" added to 2 task(s)');
+  });
+
+  it('should error when the tag does not exist', async () => {
+    vi.mocked(executeAndParseJSON).mockRejectedValue(new Error('Tag not found: Ghost'));
+
+    const result = await client.callTool({
+      name: 'omnifocus_batch_add_tag',
+      arguments: { taskIds: ['t1'], tagName: 'Ghost' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('Tag not found');
+  });
+});
+
+describe('omnifocus_batch_remove_tag', () => {
+  it('should remove a tag from multiple tasks', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({
+      successful: [createMockTask({ id: 't1', tags: [] }), createMockTask({ id: 't2', tags: [] })],
+      failed: [],
+    });
+
+    const result = await client.callTool({
+      name: 'omnifocus_batch_remove_tag',
+      arguments: { taskIds: ['t1', 't2'], tagName: 'Waiting' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('["t1","t2"]');
+    expect(script).toContain('app.remove(tagOnTask, { from: task.tags })');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Tag "Waiting" removed from 2 task(s)');
+  });
+});

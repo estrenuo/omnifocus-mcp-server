@@ -2955,6 +2955,307 @@ Examples:
 );
 
 // ============================================================================
+// Tool: Batch Complete/Drop Tasks
+// ============================================================================
+
+const BatchCompleteTaskInputSchema = z.object({
+  taskIds: z.array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Array of task IDs to complete or drop (1-100 tasks)"),
+  action: z.enum(["complete", "drop"])
+    .default("complete")
+    .describe("'complete' (default) or 'drop'")
+}).strict();
+
+server.registerTool(
+  "omnifocus_batch_complete_task",
+  {
+    title: "Batch Complete/Drop Tasks",
+    description: `Complete or drop multiple tasks in one operation.
+
+Args:
+  - taskIds (array): Array of task IDs to complete or drop (1-100)
+  - action (string): 'complete' (default) or 'drop'
+
+Returns:
+  Summary with counts and the updated tasks, plus any per-task failures
+
+Examples:
+  - Complete several: { taskIds: ["id1", "id2", "id3"] }
+  - Drop several: { taskIds: ["id1", "id2"], action: "drop" }`,
+    inputSchema: BatchCompleteTaskInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskIds, action } = params;
+
+    const safeTaskIds = sanitizeArray(taskIds, 100, 100);
+    const taskIdsJson = JSON.stringify(safeTaskIds);
+    const actionCode = action === "drop" ? "task.markDropped();" : "task.markComplete();";
+
+    const script = `
+      ${TASK_MAPPER}
+      var targetIds = ${taskIdsJson};
+      var allTasks = doc.flattenedTasks();
+      var results = { successful: [], failed: [] };
+
+      targetIds.forEach(function(taskId) {
+        try {
+          var task = allTasks.find(function(t) { return t.id() === taskId; });
+          if (!task) {
+            results.failed.push({ taskId: taskId, error: "Task not found" });
+            return;
+          }
+          ${actionCode}
+          results.successful.push(mapTask(task));
+        } catch (e) {
+          results.failed.push({ taskId: taskId, error: String(e) });
+        }
+      });
+
+      JSON.stringify(results);
+    `;
+
+    try {
+      const results = await executeAndParseJSON<{
+        successful: TaskData[];
+        failed: Array<{ taskId: string; error: string }>;
+      }>(script);
+
+      const actionVerb = action === "drop" ? "dropped" : "completed";
+      const output = {
+        totalRequested: taskIds.length,
+        successCount: results.successful.length,
+        failureCount: results.failed.length,
+        tasks: results.successful,
+        failures: results.failed
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: `${results.successful.length} task(s) ${actionVerb}${results.failed.length > 0 ? ` (${results.failed.length} failed)` : ""}:\n${JSON.stringify(output, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error in batch complete: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Batch Add Tag to Tasks
+// ============================================================================
+
+const BatchAddTagInputSchema = z.object({
+  taskIds: z.array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Array of task IDs to add the tag to (1-100 tasks)"),
+  tagName: z.string()
+    .describe("Name of the tag to add (must already exist)")
+}).strict();
+
+server.registerTool(
+  "omnifocus_batch_add_tag",
+  {
+    title: "Batch Add Tag to Tasks",
+    description: `Add the same tag to multiple tasks in one operation.
+
+The tag must already exist. Tasks that already have the tag are left unchanged.
+
+Args:
+  - taskIds (array): Array of task IDs to tag (1-100)
+  - tagName (string): Name of the tag to add
+
+Returns:
+  Summary with counts and the updated tasks, plus any per-task failures
+
+Examples:
+  - Tag several tasks: { taskIds: ["id1", "id2"], tagName: "Urgent" }`,
+    inputSchema: BatchAddTagInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskIds, tagName } = params;
+
+    const safeTaskIds = sanitizeArray(taskIds, 100, 100);
+    const taskIdsJson = JSON.stringify(safeTaskIds);
+    const safeTagName = sanitizeInput(tagName, 200);
+
+    const script = `
+      ${TASK_MAPPER}
+      var tag = doc.flattenedTags().find(function(t) { return t.name() === "${safeTagName}"; });
+      if (!tag) { throw new Error("Tag not found: ${safeTagName}"); }
+
+      var targetIds = ${taskIdsJson};
+      var allTasks = doc.flattenedTasks();
+      var results = { successful: [], failed: [] };
+
+      targetIds.forEach(function(taskId) {
+        try {
+          var task = allTasks.find(function(t) { return t.id() === taskId; });
+          if (!task) {
+            results.failed.push({ taskId: taskId, error: "Task not found" });
+            return;
+          }
+          var existingTag = task.tags().find(function(t) { return t.name() === "${safeTagName}"; });
+          if (!existingTag) {
+            app.add(tag, { to: task.tags });
+          }
+          results.successful.push(mapTask(task));
+        } catch (e) {
+          results.failed.push({ taskId: taskId, error: String(e) });
+        }
+      });
+
+      JSON.stringify(results);
+    `;
+
+    try {
+      const results = await executeAndParseJSON<{
+        successful: TaskData[];
+        failed: Array<{ taskId: string; error: string }>;
+      }>(script);
+
+      const output = {
+        totalRequested: taskIds.length,
+        successCount: results.successful.length,
+        failureCount: results.failed.length,
+        tasks: results.successful,
+        failures: results.failed
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: `Tag "${tagName}" added to ${results.successful.length} task(s)${results.failed.length > 0 ? ` (${results.failed.length} failed)` : ""}:\n${JSON.stringify(output, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error in batch add tag: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
+// Tool: Batch Remove Tag from Tasks
+// ============================================================================
+
+const BatchRemoveTagInputSchema = z.object({
+  taskIds: z.array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Array of task IDs to remove the tag from (1-100 tasks)"),
+  tagName: z.string()
+    .describe("Name of the tag to remove")
+}).strict();
+
+server.registerTool(
+  "omnifocus_batch_remove_tag",
+  {
+    title: "Batch Remove Tag from Tasks",
+    description: `Remove the same tag from multiple tasks in one operation.
+
+Tasks that do not have the tag are left unchanged.
+
+Args:
+  - taskIds (array): Array of task IDs to untag (1-100)
+  - tagName (string): Name of the tag to remove
+
+Returns:
+  Summary with counts and the updated tasks, plus any per-task failures
+
+Examples:
+  - Untag several tasks: { taskIds: ["id1", "id2"], tagName: "Waiting" }`,
+    inputSchema: BatchRemoveTagInputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    }
+  },
+  async (params) => {
+    const { taskIds, tagName } = params;
+
+    const safeTaskIds = sanitizeArray(taskIds, 100, 100);
+    const taskIdsJson = JSON.stringify(safeTaskIds);
+    const safeTagName = sanitizeInput(tagName, 200);
+
+    const script = `
+      ${TASK_MAPPER}
+      var targetIds = ${taskIdsJson};
+      var allTasks = doc.flattenedTasks();
+      var results = { successful: [], failed: [] };
+
+      targetIds.forEach(function(taskId) {
+        try {
+          var task = allTasks.find(function(t) { return t.id() === taskId; });
+          if (!task) {
+            results.failed.push({ taskId: taskId, error: "Task not found" });
+            return;
+          }
+          var tagOnTask = task.tags().find(function(t) { return t.name() === "${safeTagName}"; });
+          if (tagOnTask) {
+            app.remove(tagOnTask, { from: task.tags });
+          }
+          results.successful.push(mapTask(task));
+        } catch (e) {
+          results.failed.push({ taskId: taskId, error: String(e) });
+        }
+      });
+
+      JSON.stringify(results);
+    `;
+
+    try {
+      const results = await executeAndParseJSON<{
+        successful: TaskData[];
+        failed: Array<{ taskId: string; error: string }>;
+      }>(script);
+
+      const output = {
+        totalRequested: taskIds.length,
+        successCount: results.successful.length,
+        failureCount: results.failed.length,
+        tasks: results.successful,
+        failures: results.failed
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: `Tag "${tagName}" removed from ${results.successful.length} task(s)${results.failed.length > 0 ? ` (${results.failed.length} failed)` : ""}:\n${JSON.stringify(output, null, 2)}`
+        }]
+      };
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Error in batch remove tag: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+
+// ============================================================================
 // Tool: Update Project
 // ============================================================================
 
