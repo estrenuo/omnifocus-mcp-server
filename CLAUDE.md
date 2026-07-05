@@ -17,19 +17,41 @@ echo '{"jsonrpc":"2.0","method":"tools/list","id":1}' | node dist/index.js
 
 ## Architecture
 
-This is an MCP (Model Context Protocol) server that bridges AI assistants to OmniFocus on macOS. It uses a single-file architecture in `src/index.ts`.
+This is an MCP (Model Context Protocol) server that bridges AI assistants to OmniFocus on macOS. The source is organized as modules under `src/`:
+
+```
+src/
+├── index.ts            Entry point: connects the server, imports tool modules, re-exports the public API
+├── server.ts           The shared McpServer instance
+├── types.ts            TypeScript interfaces (TaskData, ProjectData, ...)
+├── executor.ts         executeOmniFocusScript, executeAndParseJSON
+├── sanitization.ts     sanitizeInput, sanitizeArray (JXA injection prevention)
+├── mappers.ts          JXA mapper snippets (TASK_MAPPER, PROJECT_MAPPER, ...)
+├── helpers.ts          STATUS_MAP and shared JXA script builders (generateFind*, generateTagFilter)
+├── schemas.ts          Zod input schemas for all tools
+└── tools/
+    ├── tasks.ts        Inbox, create/complete/update/delete, batch complete, notes, due/flagged/planned
+    ├── projects.ts     List, project tasks, create/update/delete, notes
+    ├── folders.ts      List, create, rename, delete
+    ├── tags.ts         List, add/remove tag, batch add/remove
+    ├── reviews.ts      Projects for review, mark reviewed, batch mark reviewed
+    ├── perspectives.ts List perspectives, get perspective tasks
+    └── search.ts       Search across tasks/projects/folders/tags
+```
+
+Tool modules register their tools on the shared `server` instance at import time (side-effect imports in `index.ts`). `index.ts` re-exports all public symbols, so `import { server, sanitizeInput, ... } from "./index.js"` keeps working; the tests rely on this.
 
 ### Core Components
 
-**Script Execution Layer** (`executeOmniFocusScript`, `executeAndParseJSON`): Runs JXA (JavaScript for Automation) scripts via `osascript -l JavaScript`. Scripts are written to a temp file to avoid shell escaping issues.
+**Script Execution Layer** (`executor.ts`: `executeOmniFocusScript`, `executeAndParseJSON`): Runs JXA (JavaScript for Automation) scripts via `osascript -l JavaScript`. Scripts are written to a temp file to avoid shell escaping issues.
 
 **Important**: This server uses **direct JXA**, not Omni Automation's `doc.evaluate()`. The evaluate method doesn't work from external JXA scripts due to type conversion errors (-1700).
 
-**Data Mappers** (`TASK_MAPPER`, `PROJECT_MAPPER`, `FOLDER_MAPPER`, `TAG_MAPPER`, `PERSPECTIVE_MAPPER`): JXA code snippets that transform OmniFocus objects into serializable JSON. These are string constants injected into every script that needs them.
+**Data Mappers** (`mappers.ts`: `TASK_MAPPER`, `PROJECT_MAPPER`, `FOLDER_MAPPER`, `TAG_MAPPER`, `PERSPECTIVE_MAPPER`): JXA code snippets that transform OmniFocus objects into serializable JSON. These are string constants injected into every script that needs them.
 
 **Tool Registrations**: Each MCP tool follows a pattern:
-1. Define a Zod schema for input validation
-2. Register with `server.registerTool()` including metadata and annotations
+1. Define a Zod schema for input validation in `schemas.ts`
+2. Register with `server.registerTool()` in the matching `tools/*.ts` file, including metadata and annotations
 3. Build a JXA script string using template literals
 4. Execute via `executeAndParseJSON<T>()` and return formatted results
 
