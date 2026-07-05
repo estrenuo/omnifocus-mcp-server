@@ -860,3 +860,214 @@ describe('omnifocus_batch_mark_reviewed', () => {
     expect(text).toContain('Successfully marked');
   });
 });
+
+const createMockFolder = (overrides: Partial<FolderData> = {}): FolderData => ({
+  id: 'folder-default',
+  name: 'Default Folder',
+  status: 'active',
+  projectCount: 0,
+  folderCount: 0,
+  parentName: null,
+  ...overrides,
+});
+
+describe('omnifocus_update_project', () => {
+  it('should rename a project by ID', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ id: 'proj-1', name: 'Renamed' }));
+
+    const result = await client.callTool({
+      name: 'omnifocus_update_project',
+      arguments: { projectId: 'proj-1', name: 'Renamed' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('p.id() === "proj-1"');
+    expect(script).toContain('project.name = "Renamed"');
+    expect(script).toContain('mapProject');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Project updated');
+  });
+
+  it('should set status via the JXA status map', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ status: 'on hold' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_project',
+      arguments: { projectId: 'proj-1', status: 'on hold' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('project.status = "on hold status"');
+  });
+
+  it('should clear due date when null', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject());
+
+    await client.callTool({
+      name: 'omnifocus_update_project',
+      arguments: { projectId: 'proj-1', dueDate: null },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('project.dueDate = null');
+  });
+
+  it('should set reviewInterval as a {unit, steps} record (not raw seconds)', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject());
+
+    await client.callTool({
+      name: 'omnifocus_update_project',
+      arguments: { projectId: 'proj-1', reviewIntervalDays: 14 },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('project.reviewInterval = {unit: "day", steps: 14}');
+  });
+
+  it('should error when neither id nor name provided', async () => {
+    const result = await client.callTool({ name: 'omnifocus_update_project', arguments: { name: 'X' } });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('Either projectId or projectName');
+  });
+
+  it('should error when no fields to update', async () => {
+    const result = await client.callTool({ name: 'omnifocus_update_project', arguments: { projectId: 'proj-1' } });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('No fields to update');
+  });
+});
+
+describe('omnifocus_delete_project', () => {
+  it('should delete a project by ID', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({ deleted: true, name: 'Doomed Project' });
+
+    const result = await client.callTool({
+      name: 'omnifocus_delete_project',
+      arguments: { projectId: 'proj-1' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('p.id() === "proj-1"');
+    expect(script).toContain('app.delete(project)');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Project deleted: "Doomed Project"');
+  });
+
+  it('should error when neither id nor name provided', async () => {
+    const result = await client.callTool({ name: 'omnifocus_delete_project', arguments: {} });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('Either projectId or projectName');
+  });
+});
+
+describe('omnifocus_create_folder', () => {
+  it('should create a top-level folder', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockFolder({ id: 'f-new', name: 'Work' }));
+
+    const result = await client.callTool({
+      name: 'omnifocus_create_folder',
+      arguments: { name: 'Work' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('app.Folder({name: "Work"})');
+    expect(script).toContain('doc.folders.push(folder)');
+    expect(script).toContain('mapFolder');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Folder created successfully');
+  });
+
+  it('should nest under a parent folder', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockFolder({ name: 'Q1', parentName: 'Work' }));
+
+    await client.callTool({
+      name: 'omnifocus_create_folder',
+      arguments: { name: 'Q1', parentFolderName: 'Work' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('doc.flattenedFolders().find');
+    expect(script).toContain('Work');
+    expect(script).toContain('parentFolder.folders.push(folder)');
+    expect(script).not.toContain('doc.folders.push(folder)');
+  });
+
+  it('should reject folder name with dangerous patterns', async () => {
+    const result = await client.callTool({
+      name: 'omnifocus_create_folder',
+      arguments: { name: 'Bad ${evil}' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('template literal injection');
+  });
+});
+
+describe('omnifocus_update_folder', () => {
+  it('should rename a folder by ID', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockFolder({ id: 'f-1', name: 'Archive' }));
+
+    const result = await client.callTool({
+      name: 'omnifocus_update_folder',
+      arguments: { folderId: 'f-1', name: 'Archive' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('f.id() === "f-1"');
+    expect(script).toContain('folder.name = "Archive"');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Folder updated');
+  });
+
+  it('should rename a folder by name', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockFolder({ name: 'Q1 2027' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_folder',
+      arguments: { folderName: 'Q1', name: 'Q1 2027' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('f.name() === "Q1"');
+    expect(script).toContain('folder.name = "Q1 2027"');
+  });
+
+  it('should error when neither id nor name provided', async () => {
+    const result = await client.callTool({ name: 'omnifocus_update_folder', arguments: { name: 'X' } });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('Either folderId or folderName');
+  });
+});
+
+describe('omnifocus_delete_folder', () => {
+  it('should delete a folder by ID', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({ deleted: true, name: 'Doomed Folder' });
+
+    const result = await client.callTool({
+      name: 'omnifocus_delete_folder',
+      arguments: { folderId: 'f-1' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('f.id() === "f-1"');
+    expect(script).toContain('app.delete(folder)');
+
+    const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
+    expect(text).toContain('Folder deleted: "Doomed Folder"');
+  });
+
+  it('should error when neither id nor name provided', async () => {
+    const result = await client.callTool({ name: 'omnifocus_delete_folder', arguments: {} });
+
+    expect(result.isError).toBe(true);
+    expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('Either folderId or folderName');
+  });
+});
