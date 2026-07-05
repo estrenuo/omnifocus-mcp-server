@@ -1241,4 +1241,18 @@ describe('multi-tag filtering (tags + tagMatchMode)', () => {
     expect(result.isError).toBe(true);
     expect((result as { content: Array<{ type: string; text: string }> }).content[0].text).toContain('template literal injection');
   });
+
+  it('should apply the tag filter BEFORE slicing to limit (not after)', async () => {
+    // Otherwise a limit-truncated pool would be filtered, silently dropping matches.
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask()]);
+
+    await client.callTool({ name: 'omnifocus_get_flagged_tasks', arguments: { tags: ['Urgent'], limit: 50 } });
+    const script = getCapturedScript();
+
+    const filterPos = script.indexOf('var wanted =');
+    const slicePos = script.indexOf('tasks.slice(0, 50)');
+    expect(filterPos).toBeGreaterThan(-1);
+    expect(slicePos).toBeGreaterThan(-1);
+    expect(filterPos).toBeLessThan(slicePos);
+  });
 });

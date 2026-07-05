@@ -508,9 +508,10 @@ Examples:
 
     const script = `
       ${TASK_MAPPER}
-      var tasks = doc.inboxTasks().slice(0, ${limit});
+      var tasks = doc.inboxTasks();
       ${!includeCompleted ? 'tasks = tasks.filter(function(t) { return !t.completed(); });' : ''}
       ${tagFilter}
+      tasks = tasks.slice(0, ${limit});
       JSON.stringify(tasks.map(mapTask));
     `;
     
@@ -1826,8 +1827,9 @@ Examples:
         return due <= futureDate;
       }).sort(function(a, b) {
         return a.dueDate() - b.dueDate();
-      }).slice(0, ${limit});
+      });
       ${tagFilter}
+      tasks = tasks.slice(0, ${limit});
 
       JSON.stringify(tasks.map(mapTask));
     `;
@@ -1911,8 +1913,9 @@ Examples:
         if (!t.flagged()) return false;
         ${!includeCompleted ? 'if (t.completed()) return false;' : ''}
         return true;
-      }).slice(0, ${limit});
+      });
       ${tagFilter}
+      tasks = tasks.slice(0, ${limit});
       JSON.stringify(tasks.map(mapTask));
     `;
     
@@ -2023,8 +2026,9 @@ Examples:
         } catch(e) {}
         if (!aPlanned || !bPlanned) return 0;
         return aPlanned - bPlanned;
-      }).slice(0, ${limit});
+      });
       ${tagFilter}
+      tasks = tasks.slice(0, ${limit});
 
       JSON.stringify(tasks.map(mapTask));
     `;
