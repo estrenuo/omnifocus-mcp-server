@@ -23,6 +23,7 @@ This is an MCP (Model Context Protocol) server that bridges AI assistants to Omn
 src/
 ├── index.ts            Entry point: connects the server, imports tool modules, re-exports the public API
 ├── server.ts           The shared McpServer instance
+├── http.ts             Streamable HTTP transport for remote access (auth, session handling)
 ├── types.ts            TypeScript interfaces (TaskData, ProjectData, ...)
 ├── executor.ts         executeOmniFocusScript, executeAndParseJSON
 ├── sanitization.ts     sanitizeInput, sanitizeArray (JXA injection prevention)
@@ -57,10 +58,12 @@ Tool modules register their tools on the shared `server` instance at import time
 
 ### Communication Pattern
 
-The server uses stdio transport. OmniFocus communication happens through:
+The server uses stdio transport by default. OmniFocus communication happens through:
 ```
 MCP Client → stdio → this server → osascript -l JavaScript → OmniFocus.app
 ```
+
+With `MCP_TRANSPORT=http` the server instead listens as a Streamable HTTP endpoint on `/mcp` (`http.ts`), for remote clients such as claude.ai custom connectors (Claude iOS). `MCP_AUTH_TOKEN` is mandatory in this mode; auth is accepted as a Bearer header or path token (`/mcp/<token>`). The HTTP transport serves a single active session — a new `initialize` replaces the previous one (each tool call is stateless, clients re-initialize on 404). See README "Remote access" for the tunnel/infra setup.
 
 ## JXA Syntax Notes
 
@@ -132,7 +135,7 @@ npm run test:watch    # Watch mode
 npm run test:coverage # Coverage report (output in coverage/)
 ```
 
-Tests live in `src/__tests__/`: `tools.test.ts` (137 tests), `executor.test.ts` (10 tests, `child_process.exec` mocked), `sanitization.test.ts` (50 tests), `integration.test.ts` (14 tests, skipped by default — requires running OmniFocus and modifies your database).
+Tests live in `src/__tests__/`: `tools.test.ts` (137 tests), `executor.test.ts` (10 tests, `child_process.exec` mocked), `sanitization.test.ts` (50 tests), `http.test.ts` (11 tests, real HTTP server on an ephemeral port), `integration.test.ts` (14 tests, skipped by default — requires running OmniFocus and modifies your database).
 
 Coverage target: 80%+ lines, 75%+ branches. These are enforced as thresholds in `vitest.config.ts`, so `npm run test:coverage` fails if coverage drops below them.
 
