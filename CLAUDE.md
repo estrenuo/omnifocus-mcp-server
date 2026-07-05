@@ -110,9 +110,9 @@ npm run test:watch    # Watch mode
 npm run test:coverage # Coverage report (output in coverage/)
 ```
 
-Tests live in `src/__tests__/`: `tools.test.ts` (87 tests), `sanitization.test.ts` (50 tests), `integration.test.ts` (14 tests, skipped by default — requires running OmniFocus and modifies your database).
+Tests live in `src/__tests__/`: `tools.test.ts` (137 tests), `executor.test.ts` (10 tests, `child_process.exec` mocked), `sanitization.test.ts` (50 tests), `integration.test.ts` (14 tests, skipped by default — requires running OmniFocus and modifies your database).
 
-Coverage target: 80%+ lines, 75%+ branches.
+Coverage target: 80%+ lines, 75%+ branches. These are enforced as thresholds in `vitest.config.ts`, so `npm run test:coverage` fails if coverage drops below them.
 
 ## Key Implementation Details
 
