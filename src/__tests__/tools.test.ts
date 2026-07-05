@@ -1256,3 +1256,268 @@ describe('multi-tag filtering (tags + tagMatchMode)', () => {
     expect(filterPos).toBeLessThan(slicePos);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Additional coverage: optional-field branches and error paths
+// ---------------------------------------------------------------------------
+
+const textOf = (r: unknown) => (r as { content: Array<{ type: string; text: string }> }).content[0].text;
+
+describe('omnifocus_update_task (field branches)', () => {
+  beforeEach(() => vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask({ id: 'task-1' })));
+
+  it('renames the task', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', name: 'New' } });
+    expect(getCapturedScript()).toContain('task.name = "New"');
+  });
+
+  it('sets and clears the note', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', note: 'hello' } });
+    expect(getCapturedScript()).toContain('task.note = "hello"');
+    vi.clearAllMocks();
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask());
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', note: null } });
+    expect(getCapturedScript()).toContain('task.note = ""');
+  });
+
+  it('sets and clears due, defer and planned dates', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', dueDate: '2027-01-01T09:00:00', deferDate: '2027-01-01T08:00:00', plannedDate: '2027-01-02T08:00:00' } });
+    let s = getCapturedScript();
+    expect(s).toContain('task.dueDate = new Date("2027-01-01T09:00:00")');
+    expect(s).toContain('task.deferDate = new Date("2027-01-01T08:00:00")');
+    expect(s).toContain('task.plannedDate = new Date("2027-01-02T08:00:00")');
+    vi.clearAllMocks();
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask());
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', dueDate: null, deferDate: null, plannedDate: null } });
+    s = getCapturedScript();
+    expect(s).toContain('task.dueDate = null');
+    expect(s).toContain('task.deferDate = null');
+    expect(s).toContain('task.plannedDate = null');
+  });
+
+  it('sets flagged and estimatedMinutes (value and clear)', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', flagged: true, estimatedMinutes: 45 } });
+    let s = getCapturedScript();
+    expect(s).toContain('task.flagged = true');
+    expect(s).toContain('task.estimatedMinutes = 45');
+    vi.clearAllMocks();
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask());
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', estimatedMinutes: 0 } });
+    expect(getCapturedScript()).toContain('task.estimatedMinutes = null');
+  });
+
+  it('moves the task by projectId', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', projectId: 'proj-9' } });
+    const s = getCapturedScript();
+    expect(s).toContain('p.id() === "proj-9"');
+    expect(s).toContain('task.assignedContainer = targetProject');
+  });
+
+  it('moves the task by projectName', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', projectName: 'Work' } });
+    const s = getCapturedScript();
+    expect(s).toContain('p.name() === "Work"');
+    expect(s).toContain('task.assignedContainer = targetProject');
+  });
+
+  it('finds the task by name when no id given', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskName: 'Some task', flagged: true } });
+    expect(getCapturedScript()).toContain('t.name() === "Some task"');
+  });
+
+  it('errors when neither id nor name provided', async () => {
+    const r = await client.callTool({ name: 'omnifocus_update_task', arguments: { name: 'X' } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain('Either taskId or taskName');
+  });
+
+  it('errors when no fields to update', async () => {
+    const r = await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1' } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain('No fields to update');
+  });
+});
+
+describe('omnifocus_delete_task', () => {
+  it('deletes by id', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({ deleted: true, name: 'Gone' });
+    const r = await client.callTool({ name: 'omnifocus_delete_task', arguments: { taskId: 'task-1' } });
+    expect(getCapturedScript()).toContain('app.delete(task)');
+    expect(textOf(r)).toContain('Task deleted: "Gone"');
+  });
+
+  it('deletes by name', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({ deleted: true, name: 'Gone' });
+    await client.callTool({ name: 'omnifocus_delete_task', arguments: { taskName: 'Old' } });
+    expect(getCapturedScript()).toContain('t.name() === "Old"');
+  });
+
+  it('errors when neither id nor name provided', async () => {
+    const r = await client.callTool({ name: 'omnifocus_delete_task', arguments: {} });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain('Either taskId or taskName');
+  });
+
+  it('returns an error when execution fails', async () => {
+    vi.mocked(executeAndParseJSON).mockRejectedValue(new Error('nope'));
+    const r = await client.callTool({ name: 'omnifocus_delete_task', arguments: { taskId: 'task-1' } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain('Error deleting task');
+  });
+});
+
+describe('omnifocus_create_project (option branches)', () => {
+  it('creates inside a folder with dates, flag, sequential and status', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ name: 'P' }));
+    await client.callTool({
+      name: 'omnifocus_create_project',
+      arguments: { name: 'P', folderName: 'Work', note: 'n', dueDate: '2027-01-01T09:00:00', deferDate: '2027-01-01T08:00:00', flagged: true, sequential: true, status: 'on hold' },
+    });
+    const s = getCapturedScript();
+    expect(s).toContain('doc.flattenedFolders().find');
+    expect(s).toContain('folder.projects.push(project)');
+    expect(s).toContain('project.note = "n"');
+    expect(s).toContain('project.dueDate = new Date("2027-01-01T09:00:00")');
+    expect(s).toContain('project.deferDate = new Date("2027-01-01T08:00:00")');
+    expect(s).toContain('project.flagged = true');
+    expect(s).toContain('project.sequential = true');
+    expect(s).toContain('project.status = "on hold status"');
+  });
+
+  it('creates at top level when no folder given', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject());
+    await client.callTool({ name: 'omnifocus_create_project', arguments: { name: 'Top' } });
+    const s = getCapturedScript();
+    expect(s).toContain('doc.projects.push(project)');
+    expect(s).not.toContain('doc.flattenedFolders().find');
+  });
+
+  it('returns an error when execution fails', async () => {
+    vi.mocked(executeAndParseJSON).mockRejectedValue(new Error('bad'));
+    const r = await client.callTool({ name: 'omnifocus_create_project', arguments: { name: 'P' } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain('Error creating project');
+  });
+});
+
+describe('omnifocus_update_project (more branches)', () => {
+  beforeEach(() => vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ id: 'proj-1' })));
+
+  it('clears the note with null', async () => {
+    await client.callTool({ name: 'omnifocus_update_project', arguments: { projectId: 'proj-1', note: null } });
+    expect(getCapturedScript()).toContain('project.note = ""');
+  });
+
+  it('sets note, flagged, deferDate and sequential', async () => {
+    await client.callTool({ name: 'omnifocus_update_project', arguments: { projectId: 'proj-1', note: 'x', flagged: false, deferDate: '2027-02-01T09:00:00', sequential: false } });
+    const s = getCapturedScript();
+    expect(s).toContain('project.note = "x"');
+    expect(s).toContain('project.flagged = false');
+    expect(s).toContain('project.deferDate = new Date("2027-02-01T09:00:00")');
+    expect(s).toContain('project.sequential = false');
+  });
+
+  it('finds the project by name', async () => {
+    await client.callTool({ name: 'omnifocus_update_project', arguments: { projectName: 'Proj', name: 'Renamed' } });
+    expect(getCapturedScript()).toContain('p.name() === "Proj"');
+  });
+});
+
+describe('omnifocus_create_task (more branches)', () => {
+  it('creates a task in a project by name with defer date', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask());
+    await client.callTool({ name: 'omnifocus_create_task', arguments: { name: 'T', projectName: 'Work', deferDate: '2027-01-01T08:00:00' } });
+    const s = getCapturedScript();
+    expect(s).toContain('Work');
+    expect(s).toContain('task.deferDate = new Date("2027-01-01T08:00:00")');
+  });
+
+  it('returns an error when execution fails', async () => {
+    vi.mocked(executeAndParseJSON).mockRejectedValue(new Error('bad'));
+    const r = await client.callTool({ name: 'omnifocus_create_task', arguments: { name: 'T' } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain('Error creating task');
+  });
+});
+
+describe('branch coverage: list/query filter variants', () => {
+  it('list_projects filters onHold, done and dropped statuses', async () => {
+    for (const [status, jxa] of [['onHold', 'on hold status'], ['done', 'done status'], ['dropped', 'dropped status']] as const) {
+      vi.clearAllMocks();
+      vi.mocked(executeAndParseJSON).mockResolvedValue([createMockProject()]);
+      await client.callTool({ name: 'omnifocus_list_projects', arguments: { status } });
+      expect(getCapturedScript()).toContain(jxa);
+    }
+  });
+
+  it('list_folders includes all when status is all', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([]);
+    await client.callTool({ name: 'omnifocus_list_folders', arguments: { status: 'all' } });
+    expect(getCapturedScript()).toContain('mapFolder');
+  });
+
+  it('get_due_tasks excludes overdue when includeOverdue is false', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask()]);
+    await client.callTool({ name: 'omnifocus_get_due_tasks', arguments: { includeOverdue: false } });
+    expect(getCapturedScript()).toContain('if (due < now) return false;');
+  });
+
+  it('get_planned_tasks excludes overdue when includeOverdue is false', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask()]);
+    await client.callTool({ name: 'omnifocus_get_planned_tasks', arguments: { includeOverdue: false } });
+    expect(getCapturedScript()).toContain('if (planned < now) return false;');
+  });
+
+  it('get_flagged_tasks includes completed when requested', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue([createMockTask({ completed: true, flagged: true })]);
+    await client.callTool({ name: 'omnifocus_get_flagged_tasks', arguments: { includeCompleted: true } });
+    expect(getCapturedScript()).not.toContain('if (t.completed()) return false;');
+  });
+
+  it('mark_project_reviewed applies a custom interval as a record', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject());
+    await client.callTool({ name: 'omnifocus_mark_project_reviewed', arguments: { projectId: 'proj-1', reviewIntervalDays: 30 } });
+    expect(getCapturedScript()).toContain('project.reviewInterval = {unit: "day", steps: 30}');
+  });
+
+  it('batch_mark_reviewed applies a custom interval as a record', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue({ successful: [createMockProject()], failed: [] });
+    await client.callTool({ name: 'omnifocus_batch_mark_reviewed', arguments: { projectIds: ['p1'], reviewIntervalDays: 7 } });
+    expect(getCapturedScript()).toContain('project.reviewInterval = {unit: "day", steps: 7}');
+  });
+});
+
+describe('error paths for remaining handlers', () => {
+  const cases: Array<[string, Record<string, unknown>, string]> = [
+    ['omnifocus_list_projects', {}, 'Error listing projects'],
+    ['omnifocus_get_project_tasks', { projectId: 'p' }, 'Error getting project tasks'],
+    ['omnifocus_list_folders', {}, 'Error listing folders'],
+    ['omnifocus_list_tags', {}, 'Error listing tags'],
+    ['omnifocus_add_tag_to_task', { taskId: 't', tagName: 'x' }, 'Error adding tag'],
+    ['omnifocus_remove_tag_from_task', { taskId: 't', tagName: 'x' }, 'Error removing tag'],
+    ['omnifocus_get_due_tasks', {}, 'Error getting due tasks'],
+    ['omnifocus_get_flagged_tasks', {}, 'Error getting flagged tasks'],
+    ['omnifocus_get_planned_tasks', {}, 'Error getting planned tasks'],
+    ['omnifocus_get_projects_for_review', {}, 'Error'],
+    ['omnifocus_mark_project_reviewed', { projectId: 'p' }, 'Error'],
+    ['omnifocus_batch_mark_reviewed', { projectIds: ['p'] }, 'Error in batch mark reviewed'],
+    ['omnifocus_list_perspectives', {}, 'Error'],
+    ['omnifocus_create_folder', { name: 'F' }, 'Error creating folder'],
+    ['omnifocus_update_folder', { folderId: 'f', name: 'X' }, 'Error updating folder'],
+    ['omnifocus_delete_folder', { folderId: 'f' }, 'Error deleting folder'],
+    ['omnifocus_delete_project', { projectId: 'p' }, 'Error deleting project'],
+    ['omnifocus_batch_complete_task', { taskIds: ['t'] }, 'Error in batch complete'],
+    ['omnifocus_batch_remove_tag', { taskIds: ['t'], tagName: 'x' }, 'Error in batch remove tag'],
+    ['omnifocus_update_task', { taskId: 't', flagged: true }, 'Error updating task'],
+    ['omnifocus_update_project', { projectId: 'p', name: 'X' }, 'Error updating project'],
+  ];
+
+  for (const [name, args, expected] of cases) {
+    it(`${name} returns an error when execution fails`, async () => {
+      vi.mocked(executeAndParseJSON).mockRejectedValue(new Error('exec failed'));
+      const r = await client.callTool({ name, arguments: args });
+      expect(r.isError).toBe(true);
+      expect(textOf(r)).toContain(expected);
+    });
+  }
+});
