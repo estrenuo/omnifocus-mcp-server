@@ -955,6 +955,33 @@ describe('omnifocus_update_project', () => {
     expect(script).toContain('project.status = "on hold status"');
   });
 
+  it('should complete a project via the mark verb when status is done', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ status: 'done' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_project',
+      arguments: { projectId: 'proj-1', status: 'done' },
+    });
+    const script = getCapturedScript();
+
+    // Direct assignment of done status is rejected by OmniFocus; must use markComplete.
+    expect(script).toContain('project.markComplete()');
+    expect(script).not.toContain('project.status = "done status"');
+  });
+
+  it('should drop a project via the mark verb when status is dropped', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ status: 'dropped' }));
+
+    await client.callTool({
+      name: 'omnifocus_update_project',
+      arguments: { projectId: 'proj-1', status: 'dropped' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('project.markDropped()');
+    expect(script).not.toContain('project.status = "dropped status"');
+  });
+
   it('should clear due date when null', async () => {
     vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject());
 
@@ -1465,6 +1492,14 @@ describe('omnifocus_create_project (option branches)', () => {
     await client.callTool({ name: 'omnifocus_create_project', arguments: { name: 'Parallel', sequential: false } });
     const s = getCapturedScript();
     expect(s).toContain('project.sequential = false');
+  });
+
+  it('creates a done project via the mark verb, not a direct status assignment', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject({ status: 'done' }));
+    await client.callTool({ name: 'omnifocus_create_project', arguments: { name: 'Done', status: 'done' } });
+    const s = getCapturedScript();
+    expect(s).toContain('project.markComplete()');
+    expect(s).not.toContain('project.status = "done status"');
   });
 
   it('returns an error when execution fails', async () => {
