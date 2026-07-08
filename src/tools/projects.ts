@@ -244,7 +244,7 @@ Examples:
       ${safeDueDate ? `project.dueDate = new Date("${safeDueDate}");` : ""}
       ${safeDeferDate ? `project.deferDate = new Date("${safeDeferDate}");` : ""}
       ${flagged ? `project.flagged = true;` : ""}
-      ${sequential ? `project.sequential = true;` : ""}
+      project.sequential = ${sequential};
       project.status = "${jxaStatus}";
       JSON.stringify(mapProject(project));
     `;
