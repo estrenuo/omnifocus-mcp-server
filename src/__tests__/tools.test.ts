@@ -508,9 +508,26 @@ describe('omnifocus_complete_task', () => {
 
     expect(script).toContain('task.markDropped()');
     expect(script).not.toContain('task.markComplete()');
+    // Dropping must cancel a recurring series, not roll it forward: the rule is
+    // cleared via the bridge before markDropped.
+    expect(script).toContain('_t.repetitionRule=null');
+    expect(script).toContain('app.evaluateJavascript');
 
     const text = (result as { content: Array<{ type: string; text: string }> }).content[0].text;
     expect(text).toContain('Task dropped');
+  });
+
+  it('should not clear the repetition rule when completing (repeat is expected)', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask({ id: 'task-1', completed: true }));
+
+    await client.callTool({
+      name: 'omnifocus_complete_task',
+      arguments: { taskId: 'task-1', action: 'complete' },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('task.markComplete()');
+    expect(script).not.toContain('_t.repetitionRule=null');
   });
 
   it('should search by name with exact then partial match', async () => {
@@ -1141,6 +1158,8 @@ describe('omnifocus_batch_complete_task', () => {
 
     expect(script).toContain('task.markDropped()');
     expect(script).not.toContain('task.markComplete()');
+    // Batch drop must also cancel recurring series rather than roll them forward.
+    expect(script).toContain('_t.repetitionRule=null');
   });
 
   it('should report per-task failures', async () => {
@@ -1360,6 +1379,18 @@ describe('omnifocus_update_task (field branches)', () => {
   it('finds the task by name when no id given', async () => {
     await client.callTool({ name: 'omnifocus_update_task', arguments: { taskName: 'Some task', flagged: true } });
     expect(getCapturedScript()).toContain('t.name() === "Some task"');
+  });
+
+  it('clears the repetition rule when clearRecurrence is true', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', clearRecurrence: true } });
+    const s = getCapturedScript();
+    expect(s).toContain('app.evaluateJavascript');
+    expect(s).toContain('_t.repetitionRule=null');
+  });
+
+  it('accepts clearRecurrence as the only field (no "no fields" error)', async () => {
+    const r = await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', clearRecurrence: true } });
+    expect(r.isError).toBeFalsy();
   });
 
   it('errors when neither id nor name provided', async () => {

@@ -425,7 +425,10 @@ export const UpdateTaskInputSchema = z.object({
     .describe("ID of the project to move the task to."),
   projectName: z.string()
     .optional()
-    .describe("Name of the project to move the task to. Ignored if projectId is provided.")
+    .describe("Name of the project to move the task to. Ignored if projectId is provided."),
+  clearRecurrence: z.boolean()
+    .optional()
+    .describe("Set true to remove the task's repetition rule (turn off recurring).")
 }).strict();
 
 export const DeleteTaskInputSchema = z.object({

@@ -47,6 +47,21 @@ export function generateFindTaskScript(safeTaskId: string | null, safeTaskName: 
 }
 
 /**
+ * Generates a JXA statement that clears a task's repetition rule through the
+ * Omni Automation bridge. Direct JXA cannot unset the rule (assigning it throws
+ * -1700), and without clearing it OmniFocus rolls a recurring task forward to
+ * its next instance when completed or dropped. `taskVar` is the name of an
+ * in-scope JXA task variable. No-op when the task has no repetition rule.
+ */
+export function generateClearRepetitionScript(taskVar: string): string {
+  return `
+      (function() {
+        var __clearRecurId = ${taskVar}.id();
+        app.evaluateJavascript("(function(){var _t=Task.byIdentifier(" + JSON.stringify(__clearRecurId) + ");if(_t.repetitionRule){_t.repetitionRule=null;}})()");
+      })();`;
+}
+
+/**
  * Generates JXA script to find a project by ID or exact name.
  * Used by omnifocus_update_project and omnifocus_delete_project.
  */
