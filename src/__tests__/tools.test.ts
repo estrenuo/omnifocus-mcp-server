@@ -1415,6 +1415,29 @@ describe('omnifocus_update_task (field branches)', () => {
     expect(s).toContain('_t.repetitionRule=null');
   });
 
+  it('adds a repetition rule when a recurrence object is given', async () => {
+    await client.callTool({
+      name: 'omnifocus_update_task',
+      arguments: { taskId: 'task-1', recurrence: { frequency: 'weekly', interval: 2, daysOfWeek: ['Monday', 'Friday'] } },
+    });
+    const s = getCapturedScript();
+    expect(s).toContain('app.evaluateJavascript');
+    expect(s).toContain('new Task.RepetitionRule(');
+    expect(s).toContain('"FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,FR"');
+    expect(s).not.toContain('_t.repetitionRule=null');
+  });
+
+  it('clears the repetition rule when recurrence is null', async () => {
+    await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', recurrence: null } });
+    const s = getCapturedScript();
+    expect(s).toContain('_t.repetitionRule=null');
+  });
+
+  it('accepts a recurrence object as the only field (no "no fields" error)', async () => {
+    const r = await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', recurrence: { frequency: 'daily' } } });
+    expect(r.isError).toBeFalsy();
+  });
+
   it('accepts clearRecurrence as the only field (no "no fields" error)', async () => {
     const r = await client.callTool({ name: 'omnifocus_update_task', arguments: { taskId: 'task-1', clearRecurrence: true } });
     expect(r.isError).toBeFalsy();

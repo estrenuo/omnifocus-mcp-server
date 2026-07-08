@@ -110,7 +110,7 @@ Folders and tags use `hidden()` instead of `status()` for filtering.
 - `omnifocus_update_folder` - Rename a folder. Note: cannot move a folder into another (JXA limitation).
 - `omnifocus_delete_folder` - Delete a folder (and its contents)
 - `omnifocus_complete_task` - Complete or drop a task (action: "complete" | "drop")
-- `omnifocus_update_task` - Update task properties (name, note, dates, flag, estimate, move to project)
+- `omnifocus_update_task` - Update task properties (name, note, dates, flag, estimate, move to project, add/remove recurrence)
 - `omnifocus_delete_task` - Delete a task
 - `omnifocus_batch_complete_task` - Complete/drop multiple tasks by ID (action: "complete" | "drop")
 - `omnifocus_add_tag_to_task` - Add tag to task
