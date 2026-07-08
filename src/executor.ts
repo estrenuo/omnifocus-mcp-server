@@ -13,7 +13,9 @@ const execAsync = promisify(exec);
 /**
  * Executes JXA (JavaScript for Automation) to interact with OmniFocus.
  * Note: doc.evaluate() for Omni Automation doesn't work from JXA due to type
- * conversion issues (-1700). We use direct JXA property access instead.
+ * conversion issues (-1700), so we use direct JXA property access. The one
+ * exception is app.evaluateJavascript(), which does work and is used where
+ * direct JXA cannot set a value (e.g. task repetition rules in tools/tasks.ts).
  */
 export async function executeOmniFocusScript(script: string): Promise<string> {
   // The script is pure JXA - properties are accessed as methods: obj.name()

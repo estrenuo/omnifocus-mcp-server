@@ -420,6 +420,43 @@ describe('omnifocus_create_task', () => {
     expect(script).toContain('app.add(tag, { to: task.tags })');
   });
 
+  it('should build a daily recurrence via the Omni Automation bridge', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask());
+
+    await client.callTool({
+      name: 'omnifocus_create_task',
+      arguments: { name: 'Standup', recurrence: { frequency: 'daily', interval: 1 } },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('app.evaluateJavascript');
+    expect(script).toContain('"FREQ=DAILY;INTERVAL=1"');
+    expect(script).toContain('Task.RepetitionMethod.Fixed');
+    // The broken Omni-Automation-in-JXA API must be gone.
+    expect(script).not.toContain('app.RecurrenceRule');
+  });
+
+  it('should encode weekly days and completion-based method', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockTask());
+
+    await client.callTool({
+      name: 'omnifocus_create_task',
+      arguments: {
+        name: 'Workout',
+        recurrence: {
+          frequency: 'weekly',
+          interval: 2,
+          daysOfWeek: ['Monday', 'Wednesday', 'Friday'],
+          repeatFrom: 'completion-date',
+        },
+      },
+    });
+    const script = getCapturedScript();
+
+    expect(script).toContain('"FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR"');
+    expect(script).toContain('Task.RepetitionMethod.DueDate');
+  });
+
   it('should reject invalid date format', async () => {
     const result = await client.callTool({
       name: 'omnifocus_create_task',

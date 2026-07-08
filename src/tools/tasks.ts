@@ -177,50 +177,44 @@ Examples:
       `;
     }
 
-    // Generate recurrence rule script if provided
+    // Generate recurrence rule script if provided.
+    // OmniFocus repetition rules cannot be assigned via direct JXA (setting the
+    // `repetition rule` record throws a -1700 type-conversion error), so we set
+    // the rule through the Omni Automation bridge (app.evaluateJavascript),
+    // which builds a Task.RepetitionRule from an iCalendar (RFC 5545) RRULE.
     let recurrenceScript = "";
     if (recurrence) {
       const { frequency, interval = 1, daysOfWeek, dayOfMonth, monthOfYear, repeatFrom = "due-date" } = recurrence;
 
-      // Set repetition method
-      const repetitionMethod = repeatFrom === "completion-date" ? "start-after-completion" : "fixed";
-      recurrenceScript += `task.repetitionMethod = app.RepetitionMethod.${repetitionMethod};\n`;
-
-      // Build the recurrence rule based on frequency
-      if (frequency === "daily") {
-        recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.daily, interval: ${interval} });\n`;
-      } else if (frequency === "weekly") {
-        if (daysOfWeek && daysOfWeek.length > 0) {
-          // Map day names to RecurrenceDay enum values
-          const dayMapping: Record<string, string> = {
-            "Sunday": "sunday",
-            "Monday": "monday",
-            "Tuesday": "tuesday",
-            "Wednesday": "wednesday",
-            "Thursday": "thursday",
-            "Friday": "friday",
-            "Saturday": "saturday"
-          };
-          const days = daysOfWeek.map(d => `app.RecurrenceDay.${dayMapping[d]}`).join(", ");
-          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.weekly, interval: ${interval}, daysOfWeek: [${days}] });\n`;
-        } else {
-          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.weekly, interval: ${interval} });\n`;
-        }
-      } else if (frequency === "monthly") {
-        if (dayOfMonth) {
-          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.monthly, interval: ${interval}, dayOfMonth: ${dayOfMonth} });\n`;
-        } else {
-          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.monthly, interval: ${interval} });\n`;
-        }
+      // Build the RRULE string from the schema-validated params.
+      const ruleParts = [`FREQ=${frequency.toUpperCase()}`, `INTERVAL=${interval}`];
+      if (frequency === "weekly" && daysOfWeek && daysOfWeek.length > 0) {
+        const dayCodes: Record<string, string> = {
+          Sunday: "SU", Monday: "MO", Tuesday: "TU", Wednesday: "WE",
+          Thursday: "TH", Friday: "FR", Saturday: "SA"
+        };
+        ruleParts.push(`BYDAY=${daysOfWeek.map(d => dayCodes[d]).join(",")}`);
+      } else if (frequency === "monthly" && dayOfMonth) {
+        ruleParts.push(`BYMONTHDAY=${dayOfMonth}`);
       } else if (frequency === "yearly") {
-        if (monthOfYear && dayOfMonth) {
-          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.yearly, interval: ${interval}, monthOfYear: ${monthOfYear}, dayOfMonth: ${dayOfMonth} });\n`;
-        } else if (monthOfYear) {
-          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.yearly, interval: ${interval}, monthOfYear: ${monthOfYear} });\n`;
-        } else {
-          recurrenceScript += `task.repetitionRule = app.RecurrenceRule({ recurrence: app.RecurrenceType.yearly, interval: ${interval} });\n`;
-        }
+        if (monthOfYear) ruleParts.push(`BYMONTH=${monthOfYear}`);
+        if (dayOfMonth) ruleParts.push(`BYMONTHDAY=${dayOfMonth}`);
       }
+      const ruleString = ruleParts.join(";");
+
+      // Map repeatFrom to an Omni Automation RepetitionMethod. "due-date" repeats
+      // on a fixed calendar; "completion-date" schedules the next due date from
+      // when the task is completed.
+      const method = repeatFrom === "completion-date" ? "DueDate" : "Fixed";
+
+      // ruleString and method are built entirely from validated enums/integers,
+      // so no user input reaches the bridge. The task id is quoted at runtime.
+      recurrenceScript = `
+        var recurTaskId = task.id();
+        var recurRule = ${JSON.stringify(ruleString)};
+        var recurOJ = "(function(){var _t=Task.byIdentifier(" + JSON.stringify(recurTaskId) + ");_t.repetitionRule=new Task.RepetitionRule(" + JSON.stringify(recurRule) + ", Task.RepetitionMethod.${method});})()";
+        app.evaluateJavascript(recurOJ);
+      `;
     }
 
     // Sanitize tag names if provided

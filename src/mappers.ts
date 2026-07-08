@@ -23,11 +23,11 @@ function mapTask(t) {
   try {
     var repRule = t.repetitionRule();
     if (repRule) {
-      repetitionRule = String(repRule);
-    }
-    var repMethod = t.repetitionMethod();
-    if (repMethod) {
-      repetitionMethod = String(repMethod);
+      // A materialized repetition-rule record exposes the RRULE and method as
+      // plain string properties (accessed without parentheses). Reading them via
+      // t.repetitionRule()/t.repetitionMethod() as functions throws instead.
+      repetitionRule = repRule.recurrence ? String(repRule.recurrence) : null;
+      repetitionMethod = repRule.repetitionMethod ? String(repRule.repetitionMethod) : null;
     }
   } catch(e) {}
 
