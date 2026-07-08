@@ -378,6 +378,26 @@ After building, you can test with:
 echo '{"jsonrpc":"2.0","method":"tools/list","id":1}' | node dist/index.js
 ```
 
+### Applying changes to a running server (important)
+
+MCP clients fetch the tool list **once when they connect** and cache it for the
+session. `npm run build` alone does not update a client that is already
+connected — Node does not hot-reload, and the client will not re-fetch the
+schema. After changing tools/schemas you must both restart the server and make
+each client reconnect:
+
+1. **Rebuild:** `npm run build`
+2. **Restart the server process** so it loads the new `dist/`:
+   - LaunchAgent (HTTP transport): `launchctl kickstart -k gui/$(id -u)/com.sanderrobijns.omnifocus-mcp`
+   - Verify it serves the new schema: `lsof -nP -iTCP:3000 -sTCP:LISTEN` should show a freshly started PID.
+3. **Reconnect each client** so it re-fetches `tools/list`:
+   - **Claude Code / Cowork:** start a **new session** (a running session keeps its cached schema for its whole lifetime).
+   - **Claude Desktop:** quit and reopen the app (or toggle the server off/on).
+   - **claude.ai / Claude iOS custom connector:** re-sync the connector in Settings → Connectors (it caches the tool list at the connector level).
+
+Until the client reconnects it keeps showing the old schema, even though the
+server already serves the new one.
+
 ## License
 
 MIT
