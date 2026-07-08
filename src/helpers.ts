@@ -79,6 +79,21 @@ export function generateFindProjectScript(safeProjectId: string | null, safeProj
 }
 
 /**
+ * Generates a JXA statement that sets a project's status on an in-scope
+ * `project` variable. OmniFocus rejects direct assignment of done/dropped
+ * ("Use the mark completed/dropped verb instead"), so those go through
+ * markComplete()/markDropped(); active and on hold assign directly (assigning
+ * active also reactivates a completed or dropped project).
+ * `status` is one of "active" | "on hold" | "done" | "dropped".
+ */
+export function generateSetProjectStatusScript(status: string): string {
+  if (status === "done") return `project.markComplete();`;
+  if (status === "dropped") return `project.markDropped();`;
+  const jxaStatus = status === "on hold" ? "on hold status" : "active status";
+  return `project.status = "${jxaStatus}";`;
+}
+
+/**
  * Generates JXA script to find a folder by ID or exact name.
  * Used by omnifocus_update_folder and omnifocus_delete_folder.
  */

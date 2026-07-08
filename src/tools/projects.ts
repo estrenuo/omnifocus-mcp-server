@@ -7,7 +7,7 @@ import { executeAndParseJSON } from "../executor.js";
 import type { ProjectData, TaskData } from "../types.js";
 import { sanitizeInput } from "../sanitization.js";
 import { PROJECT_MAPPER, TASK_MAPPER } from "../mappers.js";
-import { STATUS_MAP, generateFindProjectScript } from "../helpers.js";
+import { STATUS_MAP, generateFindProjectScript, generateSetProjectStatusScript } from "../helpers.js";
 import {
   ListProjectsInputSchema,
   GetProjectTasksInputSchema,
@@ -217,14 +217,6 @@ Examples:
     const safeDueDate = dueDate ? sanitizeInput(dueDate, 100) : null;
     const safeDeferDate = deferDate ? sanitizeInput(deferDate, 100) : null;
 
-    const statusMap: Record<string, string> = {
-      "active": "active status",
-      "on hold": "on hold status",
-      "done": "done status",
-      "dropped": "dropped status"
-    };
-    const jxaStatus = statusMap[status];
-
     const createScript = safeFolderName
       ? `
         var folder = doc.flattenedFolders().find(function(f) { return f.name() === "${safeFolderName}"; });
@@ -245,7 +237,7 @@ Examples:
       ${safeDeferDate ? `project.deferDate = new Date("${safeDeferDate}");` : ""}
       ${flagged ? `project.flagged = true;` : ""}
       project.sequential = ${sequential};
-      project.status = "${jxaStatus}";
+      ${generateSetProjectStatusScript(status)}
       JSON.stringify(mapProject(project));
     `;
 
@@ -283,7 +275,7 @@ Args:
   - projectName (string, optional): The project's name to search for. At least one of projectId or projectName is required.
   - name (string, optional): New project name
   - note (string | null, optional): New note text. Pass null to clear.
-  - status (string, optional): "active", "on hold", "done", or "dropped"
+  - status (string, optional): "active", "on hold", "done", or "dropped". Setting "done" completes the project and "dropped" drops it (setting "active" reactivates a completed/dropped project).
   - flagged (boolean, optional): Set flagged state
   - dueDate (string | null, optional): New due date in ISO 8601 format. Pass null to clear.
   - deferDate (string | null, optional): New defer date in ISO 8601 format. Pass null to clear.
@@ -298,6 +290,8 @@ Returns:
 Examples:
   - Rename: { projectId: "abc123", name: "New name" }
   - Put on hold: { projectId: "abc123", status: "on hold" }
+  - Complete the project: { projectId: "abc123", status: "done" }
+  - Drop the project: { projectId: "abc123", status: "dropped" }
   - Set review interval: { projectId: "abc123", reviewIntervalDays: 14 }
   - Clear due date: { projectId: "abc123", dueDate: null }`,
     inputSchema: UpdateProjectInputSchema,
@@ -323,13 +317,6 @@ Examples:
 
     const findProjectScript = generateFindProjectScript(safeProjectId, safeProjectName);
 
-    const statusMap: Record<string, string> = {
-      "active": "active status",
-      "on hold": "on hold status",
-      "done": "done status",
-      "dropped": "dropped status"
-    };
-
     const updateLines: string[] = [];
 
     if (name !== undefined) {
@@ -340,7 +327,7 @@ Examples:
       updateLines.push(`project.note = "${safeNote}";`);
     }
     if (status !== undefined) {
-      updateLines.push(`project.status = "${statusMap[status]}";`);
+      updateLines.push(generateSetProjectStatusScript(status));
     }
     if (flagged !== undefined) {
       updateLines.push(`project.flagged = ${flagged};`);
