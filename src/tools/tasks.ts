@@ -8,7 +8,7 @@ import { executeAndParseJSON } from "../executor.js";
 import type { TaskData } from "../types.js";
 import { sanitizeInput, sanitizeArray } from "../sanitization.js";
 import { TASK_MAPPER } from "../mappers.js";
-import { generateFindTaskScript, generateTagFilter, generateClearRepetitionScript } from "../helpers.js";
+import { generateFindTaskScript, generateTagFilter, generateClearRepetitionScript, buildRRule, generateSetRepetitionScript } from "../helpers.js";
 import {
   ListInboxInputSchema,
   CreateTaskInputSchema,
@@ -177,44 +177,14 @@ Examples:
       `;
     }
 
-    // Generate recurrence rule script if provided.
-    // OmniFocus repetition rules cannot be assigned via direct JXA (setting the
-    // `repetition rule` record throws a -1700 type-conversion error), so we set
-    // the rule through the Omni Automation bridge (app.evaluateJavascript),
-    // which builds a Task.RepetitionRule from an iCalendar (RFC 5545) RRULE.
+    // Generate recurrence rule script if provided. OmniFocus repetition rules
+    // cannot be assigned via direct JXA (a -1700 type-conversion error), so
+    // buildRRule + generateSetRepetitionScript apply it through the Omni
+    // Automation bridge. Same helpers are used by update_task.
     let recurrenceScript = "";
     if (recurrence) {
-      const { frequency, interval = 1, daysOfWeek, dayOfMonth, monthOfYear, repeatFrom = "due-date" } = recurrence;
-
-      // Build the RRULE string from the schema-validated params.
-      const ruleParts = [`FREQ=${frequency.toUpperCase()}`, `INTERVAL=${interval}`];
-      if (frequency === "weekly" && daysOfWeek && daysOfWeek.length > 0) {
-        const dayCodes: Record<string, string> = {
-          Sunday: "SU", Monday: "MO", Tuesday: "TU", Wednesday: "WE",
-          Thursday: "TH", Friday: "FR", Saturday: "SA"
-        };
-        ruleParts.push(`BYDAY=${daysOfWeek.map(d => dayCodes[d]).join(",")}`);
-      } else if (frequency === "monthly" && dayOfMonth) {
-        ruleParts.push(`BYMONTHDAY=${dayOfMonth}`);
-      } else if (frequency === "yearly") {
-        if (monthOfYear) ruleParts.push(`BYMONTH=${monthOfYear}`);
-        if (dayOfMonth) ruleParts.push(`BYMONTHDAY=${dayOfMonth}`);
-      }
-      const ruleString = ruleParts.join(";");
-
-      // Map repeatFrom to an Omni Automation RepetitionMethod. "due-date" repeats
-      // on a fixed calendar; "completion-date" schedules the next due date from
-      // when the task is completed.
-      const method = repeatFrom === "completion-date" ? "DueDate" : "Fixed";
-
-      // ruleString and method are built entirely from validated enums/integers,
-      // so no user input reaches the bridge. The task id is quoted at runtime.
-      recurrenceScript = `
-        var recurTaskId = task.id();
-        var recurRule = ${JSON.stringify(ruleString)};
-        var recurOJ = "(function(){var _t=Task.byIdentifier(" + JSON.stringify(recurTaskId) + ");_t.repetitionRule=new Task.RepetitionRule(" + JSON.stringify(recurRule) + ", Task.RepetitionMethod.${method});})()";
-        app.evaluateJavascript(recurOJ);
-      `;
+      const { ruleString, method } = buildRRule(recurrence);
+      recurrenceScript = generateSetRepetitionScript("task", ruleString, method);
     }
 
     // Sanitize tag names if provided
@@ -371,7 +341,8 @@ Args:
   - estimatedMinutes (number, optional): Time estimate in minutes. Pass 0 to clear.
   - projectId (string, optional): ID of the project to move the task to.
   - projectName (string, optional): Name of the project to move the task to. Ignored if projectId is provided.
-  - clearRecurrence (boolean, optional): Set true to remove the task's repetition rule (turn off recurring).
+  - recurrence (object | null, optional): Repetition pattern to make the task recurring (same shape as create_task: frequency, interval, daysOfWeek, dayOfMonth, monthOfYear, repeatFrom). Pass null to remove recurrence.
+  - clearRecurrence (boolean, optional): Set true to remove the task's repetition rule (turn off recurring). Equivalent to recurrence: null.
 
 Returns:
   The updated task object
@@ -380,6 +351,7 @@ Examples:
   - Rename: { taskId: "abc123", name: "New name" }
   - Set due date: { taskId: "abc123", dueDate: "2024-12-31T17:00:00" }
   - Clear due date: { taskId: "abc123", dueDate: null }
+  - Make it recurring weekly: { taskId: "abc123", recurrence: { frequency: "weekly", daysOfWeek: ["Monday"] } }
   - Turn off recurring: { taskId: "abc123", clearRecurrence: true }
   - Flag and estimate: { taskId: "abc123", flagged: true, estimatedMinutes: 30 }`,
     inputSchema: UpdateTaskInputSchema,
@@ -391,7 +363,7 @@ Examples:
     }
   },
   async (params) => {
-    const { taskId, taskName, name, note, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, projectId, projectName, clearRecurrence } = params;
+    const { taskId, taskName, name, note, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, projectId, projectName, recurrence, clearRecurrence } = params;
 
     const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
     const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
@@ -456,11 +428,18 @@ Examples:
       }
     }
 
-    // Turning off recurring requires the Omni Automation bridge (direct JXA
-    // cannot unset a repetition rule).
-    const clearRecurrenceScript = clearRecurrence ? generateClearRepetitionScript("task") : "";
+    // Setting or clearing recurring requires the Omni Automation bridge (direct
+    // JXA cannot assign or unset a repetition rule). A recurrence object sets the
+    // rule; recurrence: null or clearRecurrence: true removes it.
+    let recurrenceScript = "";
+    if (recurrence) {
+      const { ruleString, method } = buildRRule(recurrence);
+      recurrenceScript = generateSetRepetitionScript("task", ruleString, method);
+    } else if (recurrence === null || clearRecurrence) {
+      recurrenceScript = generateClearRepetitionScript("task");
+    }
 
-    if (updateLines.length === 0 && moveToProjectScript === "" && clearRecurrenceScript === "") {
+    if (updateLines.length === 0 && moveToProjectScript === "" && recurrenceScript === "") {
       return {
         isError: true,
         content: [{ type: "text", text: "No fields to update were provided" }]
@@ -472,7 +451,7 @@ Examples:
       ${findTaskScript}
       ${moveToProjectScript}
       ${updateLines.join("\n      ")}
-      ${clearRecurrenceScript}
+      ${recurrenceScript}
       JSON.stringify(mapTask(task));
     `;
 

@@ -81,6 +81,35 @@ export const ListTagsInputSchema = z.object({
     .describe("Maximum number of tags to return")
 }).strict();
 
+// Recurrence pattern shared by create_task and update_task.
+export const RecurrenceObjectSchema = z.object({
+  frequency: z.enum(["daily", "weekly", "monthly", "yearly"])
+    .describe("Recurrence frequency"),
+  interval: z.number()
+    .int()
+    .min(1)
+    .default(1)
+    .describe("Interval between repetitions (e.g., every 2 weeks)"),
+  daysOfWeek: z.array(z.enum(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]))
+    .optional()
+    .describe("Days of week for weekly recurrence (e.g., ['Monday', 'Wednesday', 'Friday'])"),
+  dayOfMonth: z.number()
+    .int()
+    .min(1)
+    .max(31)
+    .optional()
+    .describe("Day of month for monthly recurrence (1-31)"),
+  monthOfYear: z.number()
+    .int()
+    .min(1)
+    .max(12)
+    .optional()
+    .describe("Month of year for yearly recurrence (1-12)"),
+  repeatFrom: z.enum(["due-date", "completion-date"])
+    .default("due-date")
+    .describe("Whether to repeat from due date or completion date")
+}).strict();
+
 export const CreateTaskInputSchema = z.object({
   name: z.string()
     .min(1)
@@ -120,33 +149,7 @@ export const CreateTaskInputSchema = z.object({
   tagNames: z.array(z.string())
     .optional()
     .describe("Array of tag names to apply"),
-  recurrence: z.object({
-    frequency: z.enum(["daily", "weekly", "monthly", "yearly"])
-      .describe("Recurrence frequency"),
-    interval: z.number()
-      .int()
-      .min(1)
-      .default(1)
-      .describe("Interval between repetitions (e.g., every 2 weeks)"),
-    daysOfWeek: z.array(z.enum(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]))
-      .optional()
-      .describe("Days of week for weekly recurrence (e.g., ['Monday', 'Wednesday', 'Friday'])"),
-    dayOfMonth: z.number()
-      .int()
-      .min(1)
-      .max(31)
-      .optional()
-      .describe("Day of month for monthly recurrence (1-31)"),
-    monthOfYear: z.number()
-      .int()
-      .min(1)
-      .max(12)
-      .optional()
-      .describe("Month of year for yearly recurrence (1-12)"),
-    repeatFrom: z.enum(["due-date", "completion-date"])
-      .default("due-date")
-      .describe("Whether to repeat from due date or completion date")
-  }).strict()
+  recurrence: RecurrenceObjectSchema
     .optional()
     .describe("Recurrence pattern for repeating tasks")
 }).strict();
@@ -426,9 +429,13 @@ export const UpdateTaskInputSchema = z.object({
   projectName: z.string()
     .optional()
     .describe("Name of the project to move the task to. Ignored if projectId is provided."),
+  recurrence: RecurrenceObjectSchema
+    .nullable()
+    .optional()
+    .describe("Set a repetition pattern to make the task recurring (same shape as create_task). Pass null to remove recurrence."),
   clearRecurrence: z.boolean()
     .optional()
-    .describe("Set true to remove the task's repetition rule (turn off recurring).")
+    .describe("Set true to remove the task's repetition rule (turn off recurring). Equivalent to recurrence: null.")
 }).strict();
 
 export const DeleteTaskInputSchema = z.object({

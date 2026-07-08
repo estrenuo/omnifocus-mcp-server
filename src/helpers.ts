@@ -61,6 +61,58 @@ export function generateClearRepetitionScript(taskVar: string): string {
       })();`;
 }
 
+/** Recurrence input shared by create_task and update_task (matches the Zod schema). */
+export interface RecurrenceInput {
+  frequency: "daily" | "weekly" | "monthly" | "yearly";
+  interval?: number;
+  daysOfWeek?: string[];
+  dayOfMonth?: number;
+  monthOfYear?: number;
+  repeatFrom?: "due-date" | "completion-date";
+}
+
+/**
+ * Translates a validated recurrence object into an iCalendar (RFC 5545) RRULE
+ * string and an Omni Automation RepetitionMethod name ("Fixed" for "due-date",
+ * "DueDate" for "completion-date"). All inputs are schema-validated enums and
+ * integers, so the result is safe to embed in a bridge script.
+ */
+export function buildRRule(recurrence: RecurrenceInput): { ruleString: string; method: string } {
+  const { frequency, interval = 1, daysOfWeek, dayOfMonth, monthOfYear, repeatFrom = "due-date" } = recurrence;
+
+  const ruleParts = [`FREQ=${frequency.toUpperCase()}`, `INTERVAL=${interval}`];
+  if (frequency === "weekly" && daysOfWeek && daysOfWeek.length > 0) {
+    const dayCodes: Record<string, string> = {
+      Sunday: "SU", Monday: "MO", Tuesday: "TU", Wednesday: "WE",
+      Thursday: "TH", Friday: "FR", Saturday: "SA"
+    };
+    ruleParts.push(`BYDAY=${daysOfWeek.map(d => dayCodes[d]).join(",")}`);
+  } else if (frequency === "monthly" && dayOfMonth) {
+    ruleParts.push(`BYMONTHDAY=${dayOfMonth}`);
+  } else if (frequency === "yearly") {
+    if (monthOfYear) ruleParts.push(`BYMONTH=${monthOfYear}`);
+    if (dayOfMonth) ruleParts.push(`BYMONTHDAY=${dayOfMonth}`);
+  }
+
+  const method = repeatFrom === "completion-date" ? "DueDate" : "Fixed";
+  return { ruleString: ruleParts.join(";"), method };
+}
+
+/**
+ * Generates a JXA statement that sets a task's repetition rule through the Omni
+ * Automation bridge (direct JXA cannot assign it, -1700). `taskVar` is the name
+ * of an in-scope JXA task variable; `ruleString`/`method` come from buildRRule.
+ */
+export function generateSetRepetitionScript(taskVar: string, ruleString: string, method: string): string {
+  return `
+      (function() {
+        var __setRecurId = ${taskVar}.id();
+        var __setRecurRule = ${JSON.stringify(ruleString)};
+        var __setRecurOJ = "(function(){var _t=Task.byIdentifier(" + JSON.stringify(__setRecurId) + ");_t.repetitionRule=new Task.RepetitionRule(" + JSON.stringify(__setRecurRule) + ", Task.RepetitionMethod.${method});})()";
+        app.evaluateJavascript(__setRecurOJ);
+      })();`;
+}
+
 /**
  * Generates JXA script to find a project by ID or exact name.
  * Used by omnifocus_update_project and omnifocus_delete_project.
