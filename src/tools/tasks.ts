@@ -8,7 +8,7 @@ import { executeAndParseJSON } from "../executor.js";
 import type { TaskData } from "../types.js";
 import { sanitizeInput, sanitizeArray } from "../sanitization.js";
 import { TASK_MAPPER } from "../mappers.js";
-import { generateFindTaskScript, generateTagFilter } from "../helpers.js";
+import { generateFindTaskScript, generateTagFilter, generateClearRepetitionScript } from "../helpers.js";
 import {
   ListInboxInputSchema,
   CreateTaskInputSchema,
@@ -278,6 +278,10 @@ Args:
   - taskName (string, optional): The task's name to search for. At least one of taskId or taskName is required.
   - action (string): 'complete' (default) or 'drop'
 
+Note: Completing a recurring task advances it to the next occurrence (normal repeat
+behavior). Dropping a recurring task cancels the whole series - its repetition rule
+is removed first so it does not roll forward to a new active instance.
+
 Returns:
   The updated task object
 
@@ -300,8 +304,12 @@ Examples:
     const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
     const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
 
+    // Dropping a recurring task otherwise rolls it forward to the next instance
+    // (leaving an active clone). Clear the repetition rule first so a drop
+    // cancels the whole series. Completing still repeats, as expected.
     const actionCode = action === "drop"
-      ? "task.markDropped();"
+      ? `${generateClearRepetitionScript("task")}
+      task.markDropped();`
       : "task.markComplete();";
 
     if (!safeTaskId && !safeTaskName) {
@@ -363,6 +371,7 @@ Args:
   - estimatedMinutes (number, optional): Time estimate in minutes. Pass 0 to clear.
   - projectId (string, optional): ID of the project to move the task to.
   - projectName (string, optional): Name of the project to move the task to. Ignored if projectId is provided.
+  - clearRecurrence (boolean, optional): Set true to remove the task's repetition rule (turn off recurring).
 
 Returns:
   The updated task object
@@ -371,6 +380,7 @@ Examples:
   - Rename: { taskId: "abc123", name: "New name" }
   - Set due date: { taskId: "abc123", dueDate: "2024-12-31T17:00:00" }
   - Clear due date: { taskId: "abc123", dueDate: null }
+  - Turn off recurring: { taskId: "abc123", clearRecurrence: true }
   - Flag and estimate: { taskId: "abc123", flagged: true, estimatedMinutes: 30 }`,
     inputSchema: UpdateTaskInputSchema,
     annotations: {
@@ -381,7 +391,7 @@ Examples:
     }
   },
   async (params) => {
-    const { taskId, taskName, name, note, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, projectId, projectName } = params;
+    const { taskId, taskName, name, note, dueDate, deferDate, plannedDate, flagged, estimatedMinutes, projectId, projectName, clearRecurrence } = params;
 
     const safeTaskId = taskId ? sanitizeInput(taskId, 100) : null;
     const safeTaskName = taskName ? sanitizeInput(taskName, 500) : null;
@@ -446,7 +456,11 @@ Examples:
       }
     }
 
-    if (updateLines.length === 0 && moveToProjectScript === "") {
+    // Turning off recurring requires the Omni Automation bridge (direct JXA
+    // cannot unset a repetition rule).
+    const clearRecurrenceScript = clearRecurrence ? generateClearRepetitionScript("task") : "";
+
+    if (updateLines.length === 0 && moveToProjectScript === "" && clearRecurrenceScript === "") {
       return {
         isError: true,
         content: [{ type: "text", text: "No fields to update were provided" }]
@@ -458,6 +472,7 @@ Examples:
       ${findTaskScript}
       ${moveToProjectScript}
       ${updateLines.join("\n      ")}
+      ${clearRecurrenceScript}
       JSON.stringify(mapTask(task));
     `;
 
@@ -580,7 +595,12 @@ Examples:
 
     const safeTaskIds = sanitizeArray(taskIds, 100, 100);
     const taskIdsJson = JSON.stringify(safeTaskIds);
-    const actionCode = action === "drop" ? "task.markDropped();" : "task.markComplete();";
+    // See omnifocus_complete_task: clear the repetition rule before dropping so a
+    // recurring task's series stops instead of rolling to its next instance.
+    const actionCode = action === "drop"
+      ? `${generateClearRepetitionScript("task")}
+          task.markDropped();`
+      : "task.markComplete();";
 
     const script = `
       ${TASK_MAPPER}
