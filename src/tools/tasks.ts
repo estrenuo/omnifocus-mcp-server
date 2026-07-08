@@ -37,13 +37,16 @@ Returns tasks that haven't been assigned to a project yet. These are typically n
 Args:
   - includeCompleted (boolean): Include completed tasks (default: false)
   - limit (number): Maximum tasks to return, 1-500 (default: 50)
+  - tags (array, optional): Filter to tasks matching these tag names (max 20)
+  - tagMatchMode (string): How to match tags - 'all' (every tag), 'any' (at least one), 'none' (none of them). Default 'all'. Only applied when tags is provided.
 
 Returns:
   Array of task objects with: id, name, note, completed, flagged, dueDate, deferDate, estimatedMinutes, tags
 
 Examples:
   - List all inbox items: {}
-  - Include completed: { includeCompleted: true }`,
+  - Include completed: { includeCompleted: true }
+  - Only untagged-by-Work items: { tags: ["Work"], tagMatchMode: "none" }`,
     inputSchema: ListInboxInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -108,6 +111,7 @@ Args:
   - name (string): Task name/title (required)
   - note (string): Optional note/description
   - projectName (string): Project to add to (inbox if not specified)
+  - parentTaskId (string): ID of a parent task to create this as a subtask of (takes priority over projectName)
   - dueDate (string): Due date in ISO 8601 format - when the task must be completed
   - deferDate (string): Defer/start date in ISO 8601 format
   - plannedDate (string): Planned date in ISO 8601 format - when you intend to work on the task
@@ -728,6 +732,8 @@ Args:
   - daysAhead (number): Days to look ahead, 0-365 (default: 7)
   - includeOverdue (boolean): Include overdue tasks (default: true)
   - limit (number): Max tasks, 1-500 (default: 50)
+  - tags (array, optional): Filter to tasks matching these tag names (max 20)
+  - tagMatchMode (string): How to match tags - 'all', 'any', or 'none' (default 'all'). Only applied when tags is provided.
 
 Returns:
   Array of due tasks sorted by due date
@@ -811,6 +817,8 @@ server.registerTool(
 Args:
   - includeCompleted (boolean): Include completed tasks (default: false)
   - limit (number): Max tasks, 1-500 (default: 50)
+  - tags (array, optional): Filter to tasks matching these tag names (max 20)
+  - tagMatchMode (string): How to match tags - 'all', 'any', or 'none' (default 'all'). Only applied when tags is provided.
 
 Returns:
   Array of flagged tasks
@@ -885,6 +893,8 @@ Args:
   - daysAhead (number): Days to look ahead, 0-365 (default: 7)
   - includeOverdue (boolean): Include overdue planned tasks (default: true)
   - limit (number): Max tasks, 1-500 (default: 50)
+  - tags (array, optional): Filter to tasks matching these tag names (max 20)
+  - tagMatchMode (string): How to match tags - 'all', 'any', or 'none' (default 'all'). Only applied when tags is provided.
 
 Returns:
   Array of planned tasks sorted by planned date
