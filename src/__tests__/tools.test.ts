@@ -1460,6 +1460,13 @@ describe('omnifocus_create_project (option branches)', () => {
     expect(s).not.toContain('doc.flattenedFolders().find');
   });
 
+  it('explicitly sets sequential=false for a parallel project (JXA defaults new projects to sequential)', async () => {
+    vi.mocked(executeAndParseJSON).mockResolvedValue(createMockProject());
+    await client.callTool({ name: 'omnifocus_create_project', arguments: { name: 'Parallel', sequential: false } });
+    const s = getCapturedScript();
+    expect(s).toContain('project.sequential = false');
+  });
+
   it('returns an error when execution fails', async () => {
     vi.mocked(executeAndParseJSON).mockRejectedValue(new Error('bad'));
     const r = await client.callTool({ name: 'omnifocus_create_project', arguments: { name: 'P' } });
