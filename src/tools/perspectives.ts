@@ -92,7 +92,7 @@ Args:
   - limit (number): Maximum tasks to return, 1-500 (default: 50)
 
 Returns:
-  Array of task objects with: id, name, completed, flagged, dueDate, deferDate, projectName, tags, estimatedMinutes
+  Array of task objects with: id, name, note, completed, flagged, dueDate, deferDate, projectName, tags, estimatedMinutes
 
 Examples:
   - Get tasks from a perspective: { perspectiveName: "Next" }
